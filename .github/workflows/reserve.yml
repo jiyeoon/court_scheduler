@@ -17,6 +17,7 @@ jobs:
   reserve:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: true  # 실패해도 이메일 알림 안 보냄 (Slack으로 대체)
     
     steps:
       - name: Checkout repository
