@@ -480,6 +480,7 @@ class ReservationBot:
     def get_available_courts(self, preferred_courts: list, slot_idx: int = 1) -> List[int]:
         """
         Get list of available courts for a specific time slot.
+        빠른 확인을 위해 implicit wait를 일시적으로 0으로 설정.
         
         Args:
             preferred_courts: List of court numbers to check
@@ -489,15 +490,31 @@ class ReservationBot:
             List of available court numbers
         """
         available = []
-        for court_num in preferred_courts:
-            try:
-                court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
-                court = self.driver.find_element(By.ID, court_id)
-                img_element = court.find_element(By.TAG_NAME, 'img')
-                if 'btn_tennis_noreserve' not in img_element.get_attribute('src'):
-                    available.append(court_num)
-            except Exception:
-                continue
+        
+        # 빠른 확인을 위해 implicit wait 일시적으로 비활성화
+        original_wait = self.driver.timeouts.implicit_wait
+        self.driver.implicitly_wait(0)
+        
+        try:
+            for court_num in preferred_courts:
+                try:
+                    court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
+                    # find_elements는 없으면 빈 리스트 반환 (대기 없음)
+                    courts = self.driver.find_elements(By.ID, court_id)
+                    if not courts:
+                        continue
+                    court = courts[0]
+                    img_elements = court.find_elements(By.TAG_NAME, 'img')
+                    if not img_elements:
+                        continue
+                    if 'btn_tennis_noreserve' not in img_elements[0].get_attribute('src'):
+                        available.append(court_num)
+                except Exception:
+                    continue
+        finally:
+            # implicit wait 복구
+            self.driver.implicitly_wait(original_wait)
+        
         return available
     
     def select_court_from_list(self, preferred_courts: list, time_slot_count: int = 2) -> Optional[int]:
