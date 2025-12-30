@@ -524,6 +524,19 @@ class ReservationBot:
         self.driver.implicitly_wait(0)
         
         try:
+            # 슬롯 2 이상일 경우 요소 로딩 대기
+            if slot_idx > 1:
+                # 첫 번째 코트의 슬롯 요소가 있는지 확인 (로딩 확인용)
+                first_court = preferred_courts[0] if preferred_courts else 5
+                test_id = f'tennis_court_img_a_{slot_idx}_{first_court}'
+                
+                # 최대 2초 대기하면서 슬롯 요소 확인
+                for _ in range(10):
+                    test_elements = self.driver.find_elements(By.ID, test_id)
+                    if test_elements:
+                        break
+                    time.sleep(0.2)
+            
             for court_num in preferred_courts:
                 try:
                     court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
@@ -571,6 +584,20 @@ class ReservationBot:
             
             # 각 시간 슬롯별로 가용 코트 확인하고 교집합 계산
             self.logger.info(f"🎾 시간 슬롯별 가용 코트 확인 중...")
+            
+            # 슬롯 2 요소 존재 여부 디버깅
+            if time_slot_count > 1:
+                # 슬롯 2 존재 확인
+                slot2_elements = self.driver.find_elements(By.CSS_SELECTOR, '[id^="tennis_court_img_a_2_"]')
+                self.logger.info(f"   [디버그] 슬롯 2 요소 개수: {len(slot2_elements)}")
+                if not slot2_elements:
+                    # 페이지 소스에서 확인
+                    page_source = self.driver.page_source
+                    if 'tennis_court_img_a_2_' in page_source:
+                        self.logger.info(f"   [디버그] 페이지 소스에 슬롯 2 존재함")
+                    else:
+                        self.logger.info(f"   [디버그] 페이지 소스에 슬롯 2 없음!")
+            
             common_courts = set(preferred_courts)
             
             for slot_idx in range(1, time_slot_count + 1):
