@@ -938,13 +938,13 @@ class ReservationBot:
                 self.notifier.send_failure("로그인 실패")
                 return 1
             
-            # 2. Navigate to reservation page
+            # 2. Preload OCR engines (로그인 직후 바로 시작 - 페이지 진입/대기 중 로딩)
+            self.captcha_solver.preload()
+            
+            # 3. Navigate to reservation page
             if not self.navigate_to_reservation_page():
                 self.notifier.send_failure("예약 페이지 진입 실패")
                 return 1
-            
-            # 3. Preload OCR engines (while waiting for 09:00)
-            self.captcha_solver.preload()
             
             # 4. Wait for 09:00
             self.wait_for_reservation_open()
