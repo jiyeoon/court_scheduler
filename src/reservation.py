@@ -655,16 +655,26 @@ class ReservationBot:
         """Solve CAPTCHA and confirm reservation."""
         try:
             self.logger.info("🔍 캡차 이미지 로딩 대기...")
-            WebDriverWait(self.driver, 60).until(
-                EC.presence_of_element_located(
+            
+            # 캡차 이미지가 표시될 때까지 대기 (visibility, not just presence)
+            captcha_element = WebDriverWait(self.driver, 60).until(
+                EC.visibility_of_element_located(
                     (By.XPATH, '//*[@id="layer_captcha_wrap"]/div/img')
                 )
             )
             
-            captcha_element = self.driver.find_element(
-                By.XPATH,
-                '//*[@id="layer_captcha_wrap"]/div/img'
-            )
+            # 이미지가 완전히 로드될 때까지 추가 대기 (width > 0 확인)
+            for _ in range(10):
+                try:
+                    size = captcha_element.size
+                    if size['width'] > 0 and size['height'] > 0:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.2)
+            
+            # 스크린샷 전 안전을 위한 짧은 대기
+            time.sleep(0.3)
             
             # Get CAPTCHA image as PIL Image
             captcha_image = Image.open(io.BytesIO(captcha_element.screenshot_as_png))
