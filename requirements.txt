@@ -1,0 +1,17 @@
+# Web Automation
+selenium==4.27.1
+webdriver-manager==4.0.2
+
+# HTTP & Utils
+requests==2.32.3
+python-dotenv==1.0.1
+
+# Date & Time
+pytz==2024.2
+
+# OCR - CAPTCHA recognition
+ddddocr==1.5.6
+easyocr==1.7.2
+pytesseract==0.3.13
+Pillow==11.0.0
+numpy==1.26.4
