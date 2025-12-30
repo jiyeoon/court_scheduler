@@ -461,17 +461,36 @@ class ReservationBot:
             
         except Exception as e:
             self.logger.info(f"❌ 시간 선택 실패: {e}")
+            # 예외 발생 시에도 alert 처리
+            try:
+                alert = self.driver.switch_to.alert
+                alert.accept()
+            except NoAlertPresentException:
+                pass
             return False
     
     def _clear_time_selections(self) -> None:
         """Clear all selected time slots."""
         try:
+            # 먼저 alert가 있으면 처리
+            try:
+                alert = self.driver.switch_to.alert
+                alert.accept()
+            except NoAlertPresentException:
+                pass
+            
             time_slots = self.driver.find_elements(By.CSS_SELECTOR, 'ul#time_con li')
             for slot in time_slots:
                 try:
                     checkbox = slot.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
                     if checkbox.is_selected():
                         self.driver.execute_script("arguments[0].click();", checkbox)
+                        # 체크 해제 시 alert 발생할 수 있음
+                        try:
+                            alert = self.driver.switch_to.alert
+                            alert.accept()
+                        except NoAlertPresentException:
+                            pass
                 except Exception:
                     continue
         except Exception:
@@ -718,6 +737,15 @@ class ReservationBot:
         except Exception as e:
             self.logger.info(f"⚠️ 디버깅 정보 수집 실패: {e}")
     
+    def _dismiss_alert_if_present(self) -> None:
+        """Dismiss any alert that might be present."""
+        try:
+            alert = self.driver.switch_to.alert
+            self.logger.info(f"ℹ️ Alert 자동 처리: {alert.text}")
+            alert.accept()
+        except NoAlertPresentException:
+            pass
+    
     def select_latest_available_time_slots(self, count: int, exclude_hours: set = None) -> Tuple[bool, Optional[int]]:
         """
         Select the latest available consecutive time slots.
@@ -734,6 +762,9 @@ class ReservationBot:
             exclude_hours = set()
             
         try:
+            # 시작 전 alert 처리
+            self._dismiss_alert_if_present()
+            
             if exclude_hours:
                 self.logger.info(f"⏰ 다음 연속 {count}시간 탐색 중... (제외: {sorted(exclude_hours, reverse=True)}시)")
             else:
@@ -788,6 +819,8 @@ class ReservationBot:
                         checkbox = slot.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
                         self.driver.execute_script("arguments[0].click();", checkbox)
                         self.logger.info(f"✅ {start_hour + i}시-{start_hour + i + 1}시 선택 완료")
+                        # 클릭 후 alert 처리
+                        self._dismiss_alert_if_present()
                     
                     return True, start_hour
             
@@ -796,6 +829,8 @@ class ReservationBot:
             
         except Exception as e:
             self.logger.info(f"❌ 시간 자동 탐색 실패: {e}")
+            # 예외 발생 시에도 alert 처리
+            self._dismiss_alert_if_present()
             return False, None
     
     def _try_strategy(self, strategy, selected_date: str) -> Tuple[bool, Optional[int], Optional[str]]:
