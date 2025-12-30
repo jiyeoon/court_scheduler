@@ -505,14 +505,14 @@ class ReservationBot:
         except Exception as e:
             self.logger.info(f"⚠️ 시간 선택 초기화 중 오류: {e}")
     
-    def get_available_courts(self, preferred_courts: list, slot_idx: int = 1) -> List[int]:
+    def get_available_courts(self, preferred_courts: list) -> List[int]:
         """
-        Get list of available courts for a specific time slot.
-        빠른 확인을 위해 implicit wait를 일시적으로 0으로 설정.
+        Get list of available courts.
+        시간 선택 후 현재 상태에서 예약 가능한 코트 목록을 반환합니다.
+        (시간을 2개 선택하면 코트 이미지 상태가 자동으로 두 시간 모두 가용 여부를 반영함)
         
         Args:
             preferred_courts: List of court numbers to check
-            slot_idx: Time slot index (1, 2, etc.)
             
         Returns:
             List of available court numbers
@@ -524,22 +524,9 @@ class ReservationBot:
         self.driver.implicitly_wait(0)
         
         try:
-            # 슬롯 2 이상일 경우 요소 로딩 대기
-            if slot_idx > 1:
-                # 첫 번째 코트의 슬롯 요소가 있는지 확인 (로딩 확인용)
-                first_court = preferred_courts[0] if preferred_courts else 5
-                test_id = f'tennis_court_img_a_{slot_idx}_{first_court}'
-                
-                # 최대 2초 대기하면서 슬롯 요소 확인
-                for _ in range(10):
-                    test_elements = self.driver.find_elements(By.ID, test_id)
-                    if test_elements:
-                        break
-                    time.sleep(0.2)
-            
             for court_num in preferred_courts:
                 try:
-                    court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
+                    court_id = f'tennis_court_img_a_1_{court_num}'
                     # find_elements는 없으면 빈 리스트 반환 (대기 없음)
                     courts = self.driver.find_elements(By.ID, court_id)
                     if not courts:
@@ -560,12 +547,13 @@ class ReservationBot:
     
     def select_court_from_list(self, preferred_courts: list, time_slot_count: int = 2) -> Optional[int]:
         """
-        Select available court from a specific list for all time slots.
-        두 시간대 모두에서 예약 가능한 코트의 교집합에서 선택합니다.
+        Select available court from a specific list.
+        시간을 선택한 상태에서 예약 가능한 코트를 선택합니다.
+        (시간 2개 선택 시 코트 상태가 자동으로 두 시간 모두 가용 여부를 반영함)
         
         Args:
             preferred_courts: List of court numbers to try (in priority order)
-            time_slot_count: Number of time slots selected (default 2 for 2 hours)
+            time_slot_count: Number of time slots selected (for logging only)
             
         Returns:
             Selected court number or None if failed
@@ -582,75 +570,48 @@ class ReservationBot:
             if court_list:
                 self.driver.execute_script("arguments[0].scrollIntoView(true);", court_list[0])
             
-            # 각 시간 슬롯별로 가용 코트 확인하고 교집합 계산
-            self.logger.info(f"🎾 시간 슬롯별 가용 코트 확인 중...")
+            # 현재 상태에서 가용 코트 확인 (시간 2개 선택 시 이미 두 시간 모두 반영됨)
+            self.logger.info(f"🎾 가용 코트 확인 중...")
+            available_courts = self.get_available_courts(preferred_courts)
+            self.logger.info(f"   가용 코트: {available_courts}")
             
-            # 슬롯 2 요소 존재 여부 디버깅
-            if time_slot_count > 1:
-                # 슬롯 2 존재 확인
-                slot2_elements = self.driver.find_elements(By.CSS_SELECTOR, '[id^="tennis_court_img_a_2_"]')
-                self.logger.info(f"   [디버그] 슬롯 2 요소 개수: {len(slot2_elements)}")
-                if not slot2_elements:
-                    # 페이지 소스에서 확인
-                    page_source = self.driver.page_source
-                    if 'tennis_court_img_a_2_' in page_source:
-                        self.logger.info(f"   [디버그] 페이지 소스에 슬롯 2 존재함")
-                    else:
-                        self.logger.info(f"   [디버그] 페이지 소스에 슬롯 2 없음!")
-            
-            common_courts = set(preferred_courts)
-            
-            for slot_idx in range(1, time_slot_count + 1):
-                available = self.get_available_courts(preferred_courts, slot_idx)
-                self.logger.info(f"   슬롯 {slot_idx} 가용 코트: {available}")
-                common_courts = common_courts.intersection(set(available))
-            
-            # 교집합을 우선순위 순서로 정렬
-            common_courts_ordered = [c for c in preferred_courts if c in common_courts]
-            self.logger.info(f"✅ 교집합 코트 (두 시간대 모두 가능): {common_courts_ordered}")
-            
-            if not common_courts_ordered:
-                self.logger.info("❌ 두 시간대 모두 예약 가능한 코트 없음")
+            if not available_courts:
+                self.logger.info("❌ 예약 가능한 코트 없음")
                 return None
             
-            # 교집합 코트에서 순서대로 시도
-            for court_num in common_courts_ordered:
+            # 가용 코트에서 순서대로 시도 (우선순위 유지)
+            courts_to_try = [c for c in preferred_courts if c in available_courts]
+            self.logger.info(f"✅ 시도할 코트 (우선순위 순): {courts_to_try}")
+            
+            for court_num in courts_to_try:
                 try:
                     self.logger.info(f"🔍 코트 {court_num} 선택 시도...")
                     
-                    # Click court for all time slots
-                    success = True
-                    for slot_idx in range(1, time_slot_count + 1):
-                        court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
-                        court = self.driver.find_element(By.ID, court_id)
-                        self.driver.execute_script("arguments[0].click();", court)
-                        self.logger.info(f"✅ 코트 {court_num} 시간슬롯 {slot_idx} 선택됨")
-                        
-                        # Check for alert (court already reserved)
-                        try:
-                            time.sleep(0.3)
-                            alert = self.driver.switch_to.alert
-                            alert_text = alert.text
-                            self.logger.info(f"⚠️ 알림창 감지: {alert_text}")
-                            
-                            if "예약이 완료된 코트입니다" in alert_text:
-                                alert.accept()
-                                self.logger.info(f"❌ 코트 {court_num} 슬롯 {slot_idx} 이미 예약 완료")
-                                success = False
-                                break
-                            else:
-                                alert.accept()
-                                self.logger.info(f"✅ 알림창 처리 완료: {alert_text}")
-                                
-                        except NoAlertPresentException:
-                            pass
+                    court_id = f'tennis_court_img_a_1_{court_num}'
+                    court = self.driver.find_element(By.ID, court_id)
+                    self.driver.execute_script("arguments[0].click();", court)
+                    self.logger.info(f"✅ 코트 {court_num} 클릭됨")
                     
-                    if success:
-                        self.logger.info(f"✅ 코트 {court_num} 전체 {time_slot_count}시간 선택 완료!")
-                        return court_num
-                    else:
-                        self.logger.info(f"🔄 코트 {court_num} 실패, 다음 코트 시도...")
-                        continue
+                    # Check for alert (court already reserved)
+                    try:
+                        time.sleep(0.3)
+                        alert = self.driver.switch_to.alert
+                        alert_text = alert.text
+                        self.logger.info(f"⚠️ 알림창 감지: {alert_text}")
+                        
+                        if "예약이 완료된 코트입니다" in alert_text:
+                            alert.accept()
+                            self.logger.info(f"❌ 코트 {court_num} 이미 예약 완료 - 다음 코트 시도")
+                            continue
+                        else:
+                            alert.accept()
+                            self.logger.info(f"✅ 알림창 처리 완료: {alert_text}")
+                            
+                    except NoAlertPresentException:
+                        pass
+                    
+                    self.logger.info(f"✅ 코트 {court_num} 선택 완료!")
+                    return court_num
                         
                 except Exception as e:
                     self.logger.info(f"⚠️ 코트 {court_num} 확인 중 오류: {e}")
