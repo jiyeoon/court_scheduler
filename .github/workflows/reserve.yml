@@ -54,6 +54,34 @@ jobs:
           python -c "import ddddocr; print('ddddocr OK')"
           python -c "import easyocr; print('easyocr OK')"
       
+      - name: Measure RTT to server
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: |
+          python -c "
+          import os, time, requests
+          from statistics import mean, stdev
+          url = os.environ.get('BASE_URL', '')
+          if not url:
+              print('BASE_URL not set')
+              exit(0)
+          rtts = []
+          print('🔍 RTT 측정 시작 (5회)')
+          for i in range(5):
+              start = time.perf_counter()
+              try:
+                  requests.get(url, timeout=10)
+                  rtt = (time.perf_counter() - start) * 1000
+                  rtts.append(rtt)
+                  print(f'  요청 {i+1}: {rtt:.0f}ms')
+              except Exception as e:
+                  print(f'  요청 {i+1}: 실패')
+              time.sleep(0.3)
+          if rtts:
+              print(f'📊 RTT 결과: 평균 {mean(rtts):.0f}ms, 최소 {min(rtts):.0f}ms, 최대 {max(rtts):.0f}ms')
+              print(f'💡 권장 PRE_REFRESH_MS: {mean(rtts):.0f}ms')
+          "
+      
       - name: Run reservation bot
         env:
           LOGIN_ID: ${{ secrets.LOGIN_ID }}
