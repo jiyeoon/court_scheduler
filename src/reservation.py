@@ -472,29 +472,38 @@ class ReservationBot:
     def _clear_time_selections(self) -> None:
         """Clear all selected time slots."""
         try:
+            self.logger.info("🔄 시간 선택 초기화 중...")
+            
             # 먼저 alert가 있으면 처리
             try:
                 alert = self.driver.switch_to.alert
+                self.logger.info(f"ℹ️ 사전 Alert 처리: {alert.text}")
                 alert.accept()
             except NoAlertPresentException:
                 pass
             
             time_slots = self.driver.find_elements(By.CSS_SELECTOR, 'ul#time_con li')
+            cleared_count = 0
             for slot in time_slots:
                 try:
                     checkbox = slot.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
                     if checkbox.is_selected():
                         self.driver.execute_script("arguments[0].click();", checkbox)
+                        cleared_count += 1
                         # 체크 해제 시 alert 발생할 수 있음
                         try:
                             alert = self.driver.switch_to.alert
+                            self.logger.info(f"ℹ️ 체크 해제 Alert 처리: {alert.text}")
                             alert.accept()
                         except NoAlertPresentException:
                             pass
                 except Exception:
                     continue
-        except Exception:
-            pass
+            
+            if cleared_count > 0:
+                self.logger.info(f"✅ {cleared_count}개 시간 슬롯 선택 해제 완료")
+        except Exception as e:
+            self.logger.info(f"⚠️ 시간 선택 초기화 중 오류: {e}")
     
     def get_available_courts(self, preferred_courts: list, slot_idx: int = 1) -> List[int]:
         """
