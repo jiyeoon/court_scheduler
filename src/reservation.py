@@ -19,8 +19,8 @@ from selenium.common.exceptions import (
     NoAlertPresentException,
 )
 
-from .config import Config
-from .notifier import Logger, SlackNotifier
+from .config import Config, INDOOR_COURTS
+from .notifier import Logger, SlackNotifier, ReservationResult
 
 
 # 한국 시간대
@@ -309,12 +309,11 @@ class ReservationBot:
     
     def wait_for_reservation_open(self) -> None:
         """Wait until 50ms before reservation opens at 09:00 KST.
-        
+
         50ms 전에 새로고침을 시작하면 서버 응답이 9시 정각에 도착합니다.
         (네트워크 RTT 약 50-100ms 고려)
+        GitHub Actions RTT가 약 1200ms이므로 절반인 600ms 선행
         """
-        # 600ms 전에 새로고침하기 위해 target_time에서 600ms를 뺌
-        # GitHub Actions RTT가 약 1200ms이므로 절반인 600ms 선행
         PRE_REFRESH_MS = 600  # 선행 시간 (밀리초)
         adjusted_target = self.target_time - timedelta(milliseconds=PRE_REFRESH_MS)
         
@@ -932,6 +931,9 @@ class ReservationBot:
         """
         self.logger.info("🎾 Court Scheduler Started")
         
+        # 예약 결과 추적
+        result = ReservationResult()
+        
         strategies = self.config.reservation.strategies
         self.logger.info(f"📋 예약 전략 목록:")
         for i, s in enumerate(strategies, 1):
@@ -944,7 +946,8 @@ class ReservationBot:
         try:
             # 1. Login
             if not self.login():
-                self.notifier.send_failure("로그인 실패")
+                result.error_message = "로그인 실패"
+                self.notifier.send_failure("로그인 실패", result)
                 return 1
             
             # 2. Preload OCR engines (로그인 직후 바로 시작 - 페이지 진입/대기 중 로딩)
@@ -952,7 +955,8 @@ class ReservationBot:
             
             # 3. Navigate to reservation page
             if not self.navigate_to_reservation_page():
-                self.notifier.send_failure("예약 페이지 진입 실패")
+                result.error_message = "예약 페이지 진입 실패"
+                self.notifier.send_failure("예약 페이지 진입 실패", result)
                 return 1
             
             # 4. Wait for 09:00
@@ -960,23 +964,36 @@ class ReservationBot:
             
             # 5. Refresh and wait for dates
             if not self.refresh_and_wait_for_dates():
-                self.notifier.send_failure("날짜 로딩 실패")
+                result.error_message = "날짜 로딩 실패"
+                self.notifier.send_failure("날짜 로딩 실패", result)
                 return 1
             
             # 6. Select latest date
             selected_date = self.select_latest_date()
             if not selected_date:
-                self.notifier.send_failure("날짜 선택 실패")
+                result.error_message = "날짜 선택 실패"
+                self.notifier.send_failure("날짜 선택 실패", result)
                 return 1
+            
+            result.date = selected_date
             
             # 7. Try each strategy in order
             selected_court = None
+            selected_time_slot = ""
+            successful_strategy = None
             last_error = ""
             
             for strategy in strategies:
+                result.tried_strategies.append(strategy.name)
                 success, court, error = self._try_strategy(strategy, selected_date)
                 if success:
                     selected_court = court
+                    successful_strategy = strategy
+                    # 시간대 정보 생성
+                    if strategy.auto_find_latest:
+                        selected_time_slot = "자동 탐색된 시간"
+                    else:
+                        selected_time_slot = f"{strategy.target_hour}:00-{strategy.target_hour + strategy.time_slot_count}:00"
                     break
                 else:
                     last_error = error
@@ -984,30 +1001,44 @@ class ReservationBot:
                     self.logger.info("🔄 다음 전략 시도...")
             
             if not selected_court:
-                self.notifier.send_failure(f"모든 전략 실패. 마지막 오류: {last_error}")
+                result.error_message = f"모든 전략 실패. 마지막 오류: {last_error}"
+                self.notifier.send_failure(f"모든 전략 실패. 마지막 오류: {last_error}", result)
                 return 1
+            
+            # 결과 정보 업데이트
+            result.court_number = selected_court
+            result.time_slot = selected_time_slot
+            result.strategy_name = successful_strategy.name
+            result.court_type = "실내 코트" if selected_court in INDOOR_COURTS else "야외 코트"
             
             self.logger.info("✅ 코트 선택 완료, OCR 처리 시작")
             
             # 8. Solve CAPTCHA and confirm
             if not self.solve_captcha_and_confirm():
-                self.notifier.send_failure("캡차 인식 또는 확인 실패")
+                result.error_message = "캡차 인식 또는 확인 실패"
+                self.notifier.send_failure("캡차 인식 또는 확인 실패", result)
                 return 1
             
             # 9. Verify reservation
             success, message = self.verify_reservation()
             
             if success:
-                self.notifier.send_success(message)
+                result.success = True
+                self.notifier.send_success(message, result)
                 self.logger.info("=" * 50)
                 self.logger.info("✅ 예약 성공!")
+                self.logger.info(f"📅 날짜: {result.date}")
+                self.logger.info(f"⏰ 시간: {result.time_slot}")
+                self.logger.info(f"🎾 코트: {result.court_number}번 ({result.court_type})")
                 self.logger.info("=" * 50)
                 return 0
             else:
-                self.notifier.send_failure(f"예약 확인 실패: {message}")
+                result.error_message = f"예약 확인 실패: {message}"
+                self.notifier.send_failure(f"예약 확인 실패: {message}", result)
                 return 1
                 
         except Exception as e:
             self.logger.info(f"💥 예외 발생: {e}")
-            self.notifier.send_failure(f"예약 발생: {e}")
+            result.error_message = f"예외 발생: {e}"
+            self.notifier.send_failure(f"예외 발생: {e}", result)
             return 1
