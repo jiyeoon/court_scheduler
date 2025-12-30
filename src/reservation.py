@@ -661,19 +661,26 @@ class ReservationBot:
         except Exception as e:
             self.logger.info(f"⚠️ 디버깅 정보 수집 실패: {e}")
     
-    def select_latest_available_time_slots(self, count: int) -> Tuple[bool, Optional[int]]:
+    def select_latest_available_time_slots(self, count: int, exclude_hours: set = None) -> Tuple[bool, Optional[int]]:
         """
         Select the latest available consecutive time slots.
         뒤에서부터 탐색하여 연속으로 예약 가능한 시간대를 찾습니다.
         
         Args:
             count: Number of consecutive slots needed
+            exclude_hours: Set of start hours to skip (already tried)
             
         Returns:
             Tuple of (success, start_hour)
         """
+        if exclude_hours is None:
+            exclude_hours = set()
+            
         try:
-            self.logger.info(f"⏰ 가능한 가장 늦은 연속 {count}시간 탐색 중...")
+            if exclude_hours:
+                self.logger.info(f"⏰ 다음 연속 {count}시간 탐색 중... (제외: {sorted(exclude_hours, reverse=True)}시)")
+            else:
+                self.logger.info(f"⏰ 가능한 가장 늦은 연속 {count}시간 탐색 중...")
             
             # 시간 슬롯 로딩 대기
             WebDriverWait(self.driver, 10).until(
@@ -690,6 +697,11 @@ class ReservationBot:
             # 뒤에서부터 탐색 (가장 늦은 시간부터)
             for start_index in range(total_slots - count, -1, -1):
                 start_hour = base_hour + start_index
+                
+                # 이미 시도한 시간대는 건너뛰기
+                if start_hour in exclude_hours:
+                    continue
+                    
                 self.logger.info(f"🔍 {start_hour}시-{start_hour + count}시 확인 중...")
                 
                 # 연속된 슬롯이 모두 예약 가능한지 확인
@@ -742,26 +754,43 @@ class ReservationBot:
         """
         self.logger.info(f"🎯 전략 시도: {strategy.name}")
         
-        # 1. 시간 선택
         if strategy.auto_find_latest:
-            # 자동 탐색: 가능한 가장 늦은 연속 시간대 찾기
-            success, found_hour = self.select_latest_available_time_slots(strategy.time_slot_count)
-            if not success:
-                return False, None, "가능한 연속 시간대 없음"
+            # 자동 탐색: 가능한 시간대를 뒤에서부터 반복 시도
+            tried_hours = set()
+            
+            while True:
+                # 1. 시간 선택 (이미 시도한 시간대 제외)
+                success, found_hour = self.select_latest_available_time_slots(
+                    strategy.time_slot_count, 
+                    exclude_hours=tried_hours
+                )
+                if not success:
+                    return False, None, "가능한 연속 시간대 없음"
+                
+                tried_hours.add(found_hour)
+                
+                # 2. 코트 선택 시도
+                selected_court = self.select_court_from_list(strategy.preferred_courts)
+                if selected_court:
+                    self.logger.info(f"✅ 전략 '{strategy.name}' 성공: {found_hour}시-{found_hour + strategy.time_slot_count}시, 코트 {selected_court}")
+                    return True, selected_court, None
+                
+                # 3. 코트 없으면 시간 선택 취소하고 다음 시간대 시도
+                self._clear_time_selections()
+                self.logger.info(f"🔄 {found_hour}시-{found_hour + strategy.time_slot_count}시에서 코트 없음, 다음 시간대 시도...")
         else:
             # 지정된 시간대 선택
             if not self.select_time_slots_by_hour(strategy.target_hour, strategy.time_slot_count):
                 return False, None, f"{strategy.target_hour}시 시간대 선택 실패"
-        
-        # 2. 코트 선택
-        selected_court = self.select_court_from_list(strategy.preferred_courts)
-        if not selected_court:
-            # 시간 선택 취소하고 다음 전략으로
-            self._clear_time_selections()
-            return False, None, f"코트 선택 실패 (대상: {strategy.preferred_courts})"
-        
-        self.logger.info(f"✅ 전략 '{strategy.name}' 성공: 코트 {selected_court}")
-        return True, selected_court, None
+            
+            # 코트 선택
+            selected_court = self.select_court_from_list(strategy.preferred_courts)
+            if not selected_court:
+                self._clear_time_selections()
+                return False, None, f"코트 선택 실패 (대상: {strategy.preferred_courts})"
+            
+            self.logger.info(f"✅ 전략 '{strategy.name}' 성공: 코트 {selected_court}")
+            return True, selected_court, None
     
     def run(self) -> int:
         """
@@ -770,9 +799,7 @@ class ReservationBot:
         Returns:
             0 for success, 1 for failure
         """
-        self.logger.info("=" * 50)
         self.logger.info("🎾 Court Scheduler Started")
-        self.logger.info("=" * 50)
         
         strategies = self.config.reservation.strategies
         self.logger.info(f"📋 예약 전략 목록:")
@@ -781,7 +808,7 @@ class ReservationBot:
                 time_desc = f"가능한 늦은 연속 {s.time_slot_count}시간"
             else:
                 time_desc = f"{s.target_hour}시-{s.target_hour + s.time_slot_count}시"
-            self.logger.info(f"   {i}순위: {s.name} ({time_desc}, 코트: {len(s.preferred_courts)}개)")
+            self.logger.info(f"✔️ {i}순위: {s.name} ({time_desc}, 코트: {len(s.preferred_courts)}개)")
         
         try:
             # 1. Login
