@@ -229,6 +229,9 @@ class ReservationBot:
             second=0,
             microsecond=0
         )
+        # 선택된 날짜/시간 정보 저장
+        self.selected_date_str = ""
+        self.selected_time_str = ""
     
     def login(self) -> bool:
         """Login to KSPO tennis reservation system."""
@@ -384,8 +387,18 @@ class ReservationBot:
             time.sleep(0.1)
             self.driver.execute_script("arguments[0].click();", target)
             
-            date_text = target.text.replace('\n', '/')
-            self.logger.info(f"✅ 예약 가능한 날짜 클릭: {date_text}")
+            # href에서 날짜 추출: javascript:fn_tennis_time_list('2025', '01', '05')
+            href = target.get_attribute('href')
+            date_match = re.search(r"fn_tennis_time_list\('(\d+)',\s*'(\d+)',\s*'(\d+)'\)", href)
+            if date_match:
+                year, month, day = date_match.groups()
+                date_text = f"{year}-{month}-{day}"
+            else:
+                # fallback: 텍스트의 첫 줄만 사용
+                date_text = target.text.split('\n')[0] if target.text else "날짜 불명"
+            
+            full_text = target.text.replace('\n', '/')
+            self.logger.info(f"✅ 예약 가능한 날짜 클릭: {date_text} ({full_text})")
             return date_text
             
         except Exception as e:
@@ -450,6 +463,19 @@ class ReservationBot:
                         self.driver.execute_script("arguments[0].click();", checkbox)
                         click_count += 1
                         self.logger.info(f"✅ {slot_hour}시-{slot_hour + 1}시 선택 완료")
+                        
+                        # 첫 번째 슬롯에서 날짜 정보 추출 (label 텍스트: "1월 5일 (15:00 ~ 16:00)")
+                        if i == 0:
+                            try:
+                                label_elem = slot.find_element(By.CSS_SELECTOR, 'label')
+                                label_text = label_elem.text
+                                # "1월 5일" 부분 추출
+                                date_match = re.search(r'(\d+월\s*\d+일)', label_text)
+                                if date_match:
+                                    self.selected_date_str = date_match.group(1)
+                                    self.logger.info(f"   └ 날짜 정보: {self.selected_date_str}")
+                            except Exception:
+                                pass
                         
                         # 각 시간 선택 후 가용 코트 확인
                         if preferred_courts:
@@ -826,6 +852,18 @@ class ReservationBot:
                         # 클릭 후 alert 처리
                         self._dismiss_alert_if_present()
                         
+                        # 첫 번째 슬롯에서 날짜 정보 추출
+                        if i == 0:
+                            try:
+                                label_elem = slot.find_element(By.CSS_SELECTOR, 'label')
+                                label_text = label_elem.text
+                                date_match = re.search(r'(\d+월\s*\d+일)', label_text)
+                                if date_match:
+                                    self.selected_date_str = date_match.group(1)
+                                    self.logger.info(f"   └ 날짜 정보: {self.selected_date_str}")
+                            except Exception:
+                                pass
+                        
                         # 각 시간 선택 후 가용 코트 확인
                         if preferred_courts:
                             time.sleep(0.3)  # 코트 상태 업데이트 대기
@@ -1010,6 +1048,9 @@ class ReservationBot:
             result.time_slot = selected_time_slot
             result.strategy_name = successful_strategy.name
             result.court_type = "실내 코트" if selected_court in INDOOR_COURTS else "야외 코트"
+            # 시간 슬롯 label에서 추출한 정확한 날짜 정보로 업데이트
+            if self.selected_date_str:
+                result.date = self.selected_date_str
             
             self.logger.info("✅ 코트 선택 완료, OCR 처리 시작")
             

@@ -33,19 +33,23 @@ class ReservationResult:
         """성공 메시지 포맷팅"""
         emoji = self.get_court_type_emoji()
         return (
-            f"📅 *날짜:* {self.date}\n"
-            f"⏰ *시간:* {self.time_slot}\n"
-            f"{emoji} *코트:* {self.court_number}번 ({self.court_type})\n"
-            f"🎯 *전략:* {self.strategy_name}"
+            f"```"
+            f"📅 날짜: {self.date}\n"
+            f"⏰ 시간: {self.time_slot}\n"
+            f"{emoji} 코트: {self.court_number}번 ({self.court_type})\n"
+            f"🎯 전략: {self.strategy_name}"
+            f"```"
         )
     
     def format_failure_message(self) -> str:
         """실패 메시지 포맷팅"""
         tried = " → ".join(self.tried_strategies) if self.tried_strategies else "없음"
         return (
-            f"📅 *날짜:* {self.date or '선택 전 실패'}\n"
-            f"🔄 *시도한 전략:* {tried}\n"
-            f"❌ *실패 원인:* {self.error_message}"
+            f"```"
+            f"📅 날짜: {self.date or '선택 전 실패'}\n"
+            f"🔄 시도한 전략: {tried}\n"
+            f"❌ 실패 원인: {self.error_message}"
+            f"```"
         )
 
 
@@ -125,7 +129,7 @@ class SlackNotifier:
         data = {
             "attachments": [
                 {
-                    "title": "🎉 테니스 코트 예약 성공!",
+                    "title": "🎉 Reservation Success",
                     "title_link": self.base_url,
                     "text": (
                         f"{detail_text}\n\n"
@@ -161,7 +165,7 @@ class SlackNotifier:
         data = {
             "attachments": [
                 {
-                    "title": "❌ 테니스 코트 예약 실패",
+                    "title": "❌ Reservation Failed",
                     "title_link": "https://github.com/actions",
                     "text": detail_text,
                     "color": "#E01E5A",
