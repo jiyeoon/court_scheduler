@@ -6,7 +6,7 @@ import io
 import re
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from PIL import Image
 from selenium import webdriver
@@ -477,9 +477,33 @@ class ReservationBot:
         except Exception:
             pass
     
+    def get_available_courts(self, preferred_courts: list, slot_idx: int = 1) -> List[int]:
+        """
+        Get list of available courts for a specific time slot.
+        
+        Args:
+            preferred_courts: List of court numbers to check
+            slot_idx: Time slot index (1, 2, etc.)
+            
+        Returns:
+            List of available court numbers
+        """
+        available = []
+        for court_num in preferred_courts:
+            try:
+                court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
+                court = self.driver.find_element(By.ID, court_id)
+                img_element = court.find_element(By.TAG_NAME, 'img')
+                if 'btn_tennis_noreserve' not in img_element.get_attribute('src'):
+                    available.append(court_num)
+            except Exception:
+                continue
+        return available
+    
     def select_court_from_list(self, preferred_courts: list, time_slot_count: int = 2) -> Optional[int]:
         """
         Select available court from a specific list for all time slots.
+        두 시간대 모두에서 예약 가능한 코트의 교집합에서 선택합니다.
         
         Args:
             preferred_courts: List of court numbers to try (in priority order)
@@ -500,29 +524,27 @@ class ReservationBot:
             if court_list:
                 self.driver.execute_script("arguments[0].scrollIntoView(true);", court_list[0])
             
-            self.logger.info(f"🎾 코트 검색 시작 (대상: {preferred_courts}, 시간슬롯: {time_slot_count}개)")
+            # 각 시간 슬롯별로 가용 코트 확인하고 교집합 계산
+            self.logger.info(f"🎾 시간 슬롯별 가용 코트 확인 중...")
+            common_courts = set(preferred_courts)
             
-            for court_num in preferred_courts:
+            for slot_idx in range(1, time_slot_count + 1):
+                available = self.get_available_courts(preferred_courts, slot_idx)
+                self.logger.info(f"   슬롯 {slot_idx} 가용 코트: {available}")
+                common_courts = common_courts.intersection(set(available))
+            
+            # 교집합을 우선순위 순서로 정렬
+            common_courts_ordered = [c for c in preferred_courts if c in common_courts]
+            self.logger.info(f"✅ 교집합 코트 (두 시간대 모두 가능): {common_courts_ordered}")
+            
+            if not common_courts_ordered:
+                self.logger.info("❌ 두 시간대 모두 예약 가능한 코트 없음")
+                return None
+            
+            # 교집합 코트에서 순서대로 시도
+            for court_num in common_courts_ordered:
                 try:
-                    self.logger.info(f"🔍 코트 {court_num} 확인 중...")
-                    
-                    # Check availability for all time slots first
-                    all_slots_available = True
-                    for slot_idx in range(1, time_slot_count + 1):
-                        court_id = f'tennis_court_img_a_{slot_idx}_{court_num}'
-                        try:
-                            court = self.driver.find_element(By.ID, court_id)
-                            img_element = court.find_element(By.TAG_NAME, 'img')
-                            if 'btn_tennis_noreserve' in img_element.get_attribute('src'):
-                                all_slots_available = False
-                                break
-                        except Exception:
-                            all_slots_available = False
-                            break
-                    
-                    if not all_slots_available:
-                        self.logger.info(f"⏳ 코트 {court_num} 예약 불가 (일부 시간대 마감)")
-                        continue
+                    self.logger.info(f"🔍 코트 {court_num} 선택 시도...")
                     
                     # Click court for all time slots
                     success = True
