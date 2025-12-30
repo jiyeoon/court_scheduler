@@ -308,10 +308,18 @@ class ReservationBot:
             return False
     
     def wait_for_reservation_open(self) -> None:
-        """Wait until reservation opens at 09:00 KST."""
-        self.logger.info("9시 정각까지 대기 시작...")
+        """Wait until 50ms before reservation opens at 09:00 KST.
+        
+        50ms 전에 새로고침을 시작하면 서버 응답이 9시 정각에 도착합니다.
+        (네트워크 RTT 약 50-100ms 고려)
+        """
+        # 50ms 전에 새로고침하기 위해 target_time에서 50ms를 뺌
+        PRE_REFRESH_MS = 50  # 선행 시간 (밀리초)
+        adjusted_target = self.target_time - timedelta(milliseconds=PRE_REFRESH_MS)
+        
+        self.logger.info(f"9시 {PRE_REFRESH_MS}ms 전까지 대기 시작...")
         current_time = datetime.now(KST)
-        time_diff = (self.target_time - current_time).total_seconds()
+        time_diff = (adjusted_target - current_time).total_seconds()
         
         if time_diff > 0:
             # Wait until 10 seconds before
@@ -325,7 +333,7 @@ class ReservationBot:
             loop_count = 0
             while True:
                 current_time = datetime.now(KST)
-                if current_time >= self.target_time:
+                if current_time >= adjusted_target:
                     break
                 loop_count += 1
                 if loop_count > 20000000:  # Prevent infinite loop
@@ -333,7 +341,7 @@ class ReservationBot:
                     break
                 time.sleep(0.0001)
             
-            self.logger.info("9시 정각 도달!")
+            self.logger.info(f"🚀 9시 {PRE_REFRESH_MS}ms 전 도달! 새로고침 시작!")
         else:
             self.logger.info("이미 9시가 지났습니다. 즉시 실행합니다.")
     
@@ -345,7 +353,7 @@ class ReservationBot:
             self.logger.info("✅ 페이지 새로고침 완료")
             
             self.logger.info("📅 예약 가능한 날짜 로딩 대기...")
-            WebDriverWait(self.driver, 300).until(
+            WebDriverWait(self.driver, 1000).until(
                 EC.presence_of_all_elements_located(
                     (By.XPATH, "//tbody//a[starts-with(@href, 'javascript:fn_tennis_time_list')]")
                 )
