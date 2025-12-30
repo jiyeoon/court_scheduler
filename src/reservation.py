@@ -384,25 +384,25 @@ class ReservationBot:
             self.logger.info(f"❌ 날짜 선택 실패: {e}")
             return None
     
-    def select_time_slots_by_hour(self, target_hour: int, count: int) -> bool:
+    def select_time_slots_by_hour(self, target_hour: int, count: int, preferred_courts: list = None) -> Tuple[bool, List[int]]:
         """
         Select time slots starting from a specific hour.
+        각 시간 선택 후 가용 코트를 확인하고 교집합을 반환합니다.
         
         시간 슬롯 인덱스 규칙:
-        - 06시 = index 0 (datetimeType01_0)
-        - 07시 = index 1 (datetimeType01_1)
-        - ...
-        - 19시 = index 13 (datetimeType01_13)
-        - 20시 = index 14 (datetimeType01_14)
-        - 21시 = index 15 (datetimeType01_15)
+        - 06시 = index 0, 19시 = index 13, 21시 = index 15
         
         Args:
             target_hour: Starting hour (e.g., 19 for 19:00)
             count: Number of slots to select
+            preferred_courts: List of court numbers to check for availability
             
         Returns:
-            True if successful, False otherwise
+            Tuple of (success, common_available_courts)
         """
+        if preferred_courts is None:
+            preferred_courts = []
+            
         try:
             # 시간 → 인덱스 변환 (06시 = 0, 19시 = 13, 21시 = 15)
             base_hour = 6
@@ -421,6 +421,7 @@ class ReservationBot:
             self.logger.info(f"📋 총 {len(time_slots)}개의 시간 슬롯 발견")
             
             click_count = 0
+            common_courts = set(preferred_courts) if preferred_courts else set()
             
             for i in range(count):
                 slot_index = start_index + i
@@ -430,7 +431,7 @@ class ReservationBot:
                 if slot_index >= len(time_slots):
                     self.logger.info(f"❌ {slot_hour}시 슬롯 인덱스({slot_index})가 범위를 벗어남")
                     self._clear_time_selections()
-                    return False
+                    return False, []
                 
                 try:
                     slot = time_slots[slot_index]
@@ -441,23 +442,40 @@ class ReservationBot:
                         self.driver.execute_script("arguments[0].click();", checkbox)
                         click_count += 1
                         self.logger.info(f"✅ {slot_hour}시-{slot_hour + 1}시 선택 완료")
+                        
+                        # 각 시간 선택 후 가용 코트 확인
+                        if preferred_courts:
+                            time.sleep(0.3)  # 코트 상태 업데이트 대기
+                            available = self.get_available_courts(preferred_courts)
+                            self.logger.info(f"   └ {slot_hour}시 가용 코트: {available}")
+                            
+                            if i == 0:
+                                common_courts = set(available)
+                            else:
+                                common_courts = common_courts.intersection(set(available))
                     else:
                         self.logger.info(f"⏳ {slot_hour}시-{slot_hour + 1}시 예약 불가 (마감)")
                         self._clear_time_selections()
-                        return False
+                        return False, []
                         
                 except Exception as e:
                     self.logger.info(f"❌ {slot_hour}시 선택 중 오류: {e}")
                     self._clear_time_selections()
-                    return False
+                    return False, []
             
             if click_count < count:
                 self.logger.info(f"⚠️ {click_count}개만 선택됨 (목표: {count}개)")
                 self._clear_time_selections()
-                return False
+                return False, []
             
-            self.logger.info(f"✅ 시간 선택 완료: {target_hour}시-{target_hour + count}시 ({click_count}개)")
-            return True
+            # 교집합을 우선순위 순서로 정렬
+            common_courts_ordered = [c for c in preferred_courts if c in common_courts] if preferred_courts else []
+            
+            self.logger.info(f"✅ 시간 선택 완료: {target_hour}시-{target_hour + count}시")
+            if preferred_courts:
+                self.logger.info(f"✅ 교집합 코트 (모든 시간 가능): {common_courts_ordered}")
+            
+            return True, common_courts_ordered
             
         except Exception as e:
             self.logger.info(f"❌ 시간 선택 실패: {e}")
@@ -467,7 +485,7 @@ class ReservationBot:
                 alert.accept()
             except NoAlertPresentException:
                 pass
-            return False
+            return False, []
     
     def _clear_time_selections(self) -> None:
         """Clear all selected time slots."""
@@ -545,84 +563,59 @@ class ReservationBot:
         
         return available
     
-    def select_court_from_list(self, preferred_courts: list, time_slot_count: int = 2) -> Optional[int]:
+    def select_court_from_common(self, common_courts: list) -> Optional[int]:
         """
-        Select available court from a specific list.
-        시간을 선택한 상태에서 예약 가능한 코트를 선택합니다.
-        (시간 2개 선택 시 코트 상태가 자동으로 두 시간 모두 가용 여부를 반영함)
+        Select court from pre-calculated common (intersection) courts.
+        이미 교집합으로 계산된 코트 목록에서 순서대로 선택을 시도합니다.
         
         Args:
-            preferred_courts: List of court numbers to try (in priority order)
-            time_slot_count: Number of time slots selected (for logging only)
+            common_courts: List of court numbers (already filtered by intersection)
             
         Returns:
             Selected court number or None if failed
         """
-        try:
-            self.logger.info("🏟️ 코트 목록 로딩 대기...")
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, 'ul.court_list li')
-                )
-            )
+        if not common_courts:
+            self.logger.info("❌ 선택 가능한 코트 없음")
+            return None
             
-            court_list = self.driver.find_elements(By.CSS_SELECTOR, 'ul.court_list li')
-            if court_list:
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", court_list[0])
-            
-            # 현재 상태에서 가용 코트 확인 (시간 2개 선택 시 이미 두 시간 모두 반영됨)
-            self.logger.info(f"🎾 가용 코트 확인 중...")
-            available_courts = self.get_available_courts(preferred_courts)
-            self.logger.info(f"   가용 코트: {available_courts}")
-            
-            if not available_courts:
-                self.logger.info("❌ 예약 가능한 코트 없음")
-                return None
-            
-            # 가용 코트에서 순서대로 시도 (우선순위 유지)
-            courts_to_try = [c for c in preferred_courts if c in available_courts]
-            self.logger.info(f"✅ 시도할 코트 (우선순위 순): {courts_to_try}")
-            
-            for court_num in courts_to_try:
+        self.logger.info(f"🎾 코트 선택 시도 (대상: {common_courts})")
+        
+        for court_num in common_courts:
+            try:
+                self.logger.info(f"🔍 코트 {court_num} 선택 시도...")
+                
+                court_id = f'tennis_court_img_a_1_{court_num}'
+                court = self.driver.find_element(By.ID, court_id)
+                self.driver.execute_script("arguments[0].click();", court)
+                self.logger.info(f"✅ 코트 {court_num} 클릭됨")
+                
+                # Check for alert (court already reserved)
                 try:
-                    self.logger.info(f"🔍 코트 {court_num} 선택 시도...")
+                    time.sleep(0.3)
+                    alert = self.driver.switch_to.alert
+                    alert_text = alert.text
+                    self.logger.info(f"⚠️ 알림창 감지: {alert_text}")
                     
-                    court_id = f'tennis_court_img_a_1_{court_num}'
-                    court = self.driver.find_element(By.ID, court_id)
-                    self.driver.execute_script("arguments[0].click();", court)
-                    self.logger.info(f"✅ 코트 {court_num} 클릭됨")
-                    
-                    # Check for alert (court already reserved)
-                    try:
-                        time.sleep(0.3)
-                        alert = self.driver.switch_to.alert
-                        alert_text = alert.text
-                        self.logger.info(f"⚠️ 알림창 감지: {alert_text}")
+                    if "예약이 완료된 코트입니다" in alert_text:
+                        alert.accept()
+                        self.logger.info(f"❌ 코트 {court_num} 이미 예약 완료 - 다음 코트 시도")
+                        continue
+                    else:
+                        alert.accept()
+                        self.logger.info(f"✅ 알림창 처리 완료: {alert_text}")
                         
-                        if "예약이 완료된 코트입니다" in alert_text:
-                            alert.accept()
-                            self.logger.info(f"❌ 코트 {court_num} 이미 예약 완료 - 다음 코트 시도")
-                            continue
-                        else:
-                            alert.accept()
-                            self.logger.info(f"✅ 알림창 처리 완료: {alert_text}")
-                            
-                    except NoAlertPresentException:
-                        pass
+                except NoAlertPresentException:
+                    pass
+                
+                self.logger.info(f"✅ 코트 {court_num} 선택 완료!")
+                return court_num
                     
-                    self.logger.info(f"✅ 코트 {court_num} 선택 완료!")
-                    return court_num
-                        
-                except Exception as e:
-                    self.logger.info(f"⚠️ 코트 {court_num} 확인 중 오류: {e}")
-                    continue
-            
-            self.logger.info("❌ 예약 가능한 코트가 없음")
-            return None
-            
-        except Exception as e:
-            self.logger.info(f"❌ 코트 선택 실패: {e}")
-            return None
+            except Exception as e:
+                self.logger.info(f"⚠️ 코트 {court_num} 확인 중 오류: {e}")
+                continue
+        
+        self.logger.info("❌ 예약 가능한 코트가 없음")
+        return None
     
     def solve_captcha_and_confirm(self) -> bool:
         """Solve CAPTCHA and confirm reservation."""
@@ -743,20 +736,23 @@ class ReservationBot:
         except NoAlertPresentException:
             pass
     
-    def select_latest_available_time_slots(self, count: int, exclude_hours: set = None) -> Tuple[bool, Optional[int]]:
+    def select_latest_available_time_slots(self, count: int, preferred_courts: list = None, exclude_hours: set = None) -> Tuple[bool, Optional[int], List[int]]:
         """
         Select the latest available consecutive time slots.
-        뒤에서부터 탐색하여 연속으로 예약 가능한 시간대를 찾습니다.
+        뒤에서부터 탐색하여 연속으로 예약 가능한 시간대를 찾고, 가용 코트 교집합을 반환합니다.
         
         Args:
             count: Number of consecutive slots needed
+            preferred_courts: List of court numbers to check for availability
             exclude_hours: Set of start hours to skip (already tried)
             
         Returns:
-            Tuple of (success, start_hour)
+            Tuple of (success, start_hour, common_available_courts)
         """
         if exclude_hours is None:
             exclude_hours = set()
+        if preferred_courts is None:
+            preferred_courts = []
             
         try:
             # 시작 전 alert 처리
@@ -807,28 +803,48 @@ class ReservationBot:
                         break
                 
                 if all_available:
-                    # 예약 가능한 연속 시간대 발견! 선택 진행
+                    # 예약 가능한 연속 시간대 발견! 선택 진행하면서 가용 코트 확인
                     self.logger.info(f"✅ {start_hour}시-{start_hour + count}시 예약 가능!")
+                    
+                    common_courts = set(preferred_courts) if preferred_courts else set()
                     
                     for i in range(count):
                         slot_index = start_index + i
+                        slot_hour = start_hour + i
                         slot = time_slots[slot_index]
                         checkbox = slot.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
                         self.driver.execute_script("arguments[0].click();", checkbox)
-                        self.logger.info(f"✅ {start_hour + i}시-{start_hour + i + 1}시 선택 완료")
+                        self.logger.info(f"✅ {slot_hour}시-{slot_hour + 1}시 선택 완료")
                         # 클릭 후 alert 처리
                         self._dismiss_alert_if_present()
+                        
+                        # 각 시간 선택 후 가용 코트 확인
+                        if preferred_courts:
+                            time.sleep(0.3)  # 코트 상태 업데이트 대기
+                            available = self.get_available_courts(preferred_courts)
+                            self.logger.info(f"   └ {slot_hour}시 가용 코트: {available}")
+                            
+                            if i == 0:
+                                common_courts = set(available)
+                            else:
+                                common_courts = common_courts.intersection(set(available))
                     
-                    return True, start_hour
+                    # 교집합을 우선순위 순서로 정렬
+                    common_courts_ordered = [c for c in preferred_courts if c in common_courts] if preferred_courts else []
+                    
+                    if preferred_courts:
+                        self.logger.info(f"✅ 교집합 코트 (모든 시간 가능): {common_courts_ordered}")
+                    
+                    return True, start_hour, common_courts_ordered
             
             self.logger.info("❌ 예약 가능한 연속 시간대를 찾을 수 없음")
-            return False, None
+            return False, None, []
             
         except Exception as e:
             self.logger.info(f"❌ 시간 자동 탐색 실패: {e}")
             # 예외 발생 시에도 alert 처리
             self._dismiss_alert_if_present()
-            return False, None
+            return False, None, []
     
     def _try_strategy(self, strategy, selected_date: str) -> Tuple[bool, Optional[int], Optional[str]]:
         """
@@ -848,9 +864,10 @@ class ReservationBot:
             tried_hours = set()
             
             while True:
-                # 1. 시간 선택 (이미 시도한 시간대 제외)
-                success, found_hour = self.select_latest_available_time_slots(
-                    strategy.time_slot_count, 
+                # 1. 시간 선택 + 가용 코트 교집합 확인 (이미 시도한 시간대 제외)
+                success, found_hour, common_courts = self.select_latest_available_time_slots(
+                    strategy.time_slot_count,
+                    preferred_courts=strategy.preferred_courts,
                     exclude_hours=tried_hours
                 )
                 if not success:
@@ -858,28 +875,38 @@ class ReservationBot:
                 
                 tried_hours.add(found_hour)
                 
-                # 2. 코트 선택 시도 (시간 슬롯 개수 전달)
-                selected_court = self.select_court_from_list(
-                    strategy.preferred_courts, 
-                    time_slot_count=strategy.time_slot_count
-                )
+                # 2. 교집합 코트가 없으면 다음 시간대 시도
+                if not common_courts:
+                    self._clear_time_selections()
+                    self.logger.info(f"🔄 {found_hour}시-{found_hour + strategy.time_slot_count}시에서 교집합 코트 없음, 다음 시간대 시도...")
+                    continue
+                
+                # 3. 교집합 코트에서 선택 시도
+                selected_court = self.select_court_from_common(common_courts)
                 if selected_court:
                     self.logger.info(f"✅ 전략 '{strategy.name}' 성공: {found_hour}시-{found_hour + strategy.time_slot_count}시, 코트 {selected_court}")
                     return True, selected_court, None
                 
-                # 3. 코트 없으면 시간 선택 취소하고 다음 시간대 시도
+                # 4. 코트 선택 실패시 시간 선택 취소하고 다음 시간대 시도
                 self._clear_time_selections()
-                self.logger.info(f"🔄 {found_hour}시-{found_hour + strategy.time_slot_count}시에서 코트 없음, 다음 시간대 시도...")
+                self.logger.info(f"🔄 {found_hour}시-{found_hour + strategy.time_slot_count}시에서 코트 선택 실패, 다음 시간대 시도...")
         else:
-            # 지정된 시간대 선택
-            if not self.select_time_slots_by_hour(strategy.target_hour, strategy.time_slot_count):
+            # 지정된 시간대 선택 + 가용 코트 교집합 확인
+            success, common_courts = self.select_time_slots_by_hour(
+                strategy.target_hour, 
+                strategy.time_slot_count,
+                preferred_courts=strategy.preferred_courts
+            )
+            if not success:
                 return False, None, f"{strategy.target_hour}시 시간대 선택 실패"
             
-            # 코트 선택 (시간 슬롯 개수 전달)
-            selected_court = self.select_court_from_list(
-                strategy.preferred_courts,
-                time_slot_count=strategy.time_slot_count
-            )
+            # 교집합 코트가 없으면 실패
+            if not common_courts:
+                self._clear_time_selections()
+                return False, None, f"{strategy.target_hour}시 시간대에서 교집합 코트 없음"
+            
+            # 교집합 코트에서 선택 시도
+            selected_court = self.select_court_from_common(common_courts)
             if not selected_court:
                 self._clear_time_selections()
                 return False, None, f"코트 선택 실패 (대상: {strategy.preferred_courts})"
