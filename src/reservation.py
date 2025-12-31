@@ -315,9 +315,9 @@ class ReservationBot:
 
         50ms 전에 새로고침을 시작하면 서버 응답이 9시 정각에 도착합니다.
         (네트워크 RTT 약 50-100ms 고려)
-        GitHub Actions RTT가 약 1200ms이므로 절반인 600ms 선행
+        정확히 9시에 새로고침 시작 (서버에 ~9시 0.6초 도착)
         """
-        PRE_REFRESH_MS = 600  # 선행 시간 (밀리초)
+        PRE_REFRESH_MS = 0  # 9시 정각에 새로고침
         adjusted_target = self.target_time - timedelta(milliseconds=PRE_REFRESH_MS)
         
         self.logger.info(f"9시 {PRE_REFRESH_MS}ms 전까지 대기 시작...")
