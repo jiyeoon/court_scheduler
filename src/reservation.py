@@ -6,8 +6,10 @@ import io
 import re
 import time
 from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from typing import List, Optional, Tuple
 
+import requests
 from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -232,6 +234,56 @@ class ReservationBot:
         # 선택된 날짜/시간 정보 저장
         self.selected_date_str = ""
         self.selected_time_str = ""
+        # 서버 시간과 로컬 시간의 차이 (초 단위, 양수 = 서버가 더 빠름)
+        self.server_time_offset: float = 0.0
+    
+    def measure_server_time_offset(self) -> float:
+        """서버 시간과 로컬 시간의 차이를 측정합니다.
+        
+        Returns:
+            offset in seconds (양수 = 서버가 로컬보다 빠름)
+        """
+        try:
+            self.logger.info("🕐 서버 시간 측정 중...")
+            
+            offsets = []
+            for i in range(3):  # 3회 측정 후 평균
+                local_before = datetime.now(timezone.utc)
+                response = requests.head(self.config.base_url, timeout=5)
+                local_after = datetime.now(timezone.utc)
+                
+                # 요청 중간 시점 계산
+                local_mid = local_before + (local_after - local_before) / 2
+                
+                # Date 헤더에서 서버 시간 파싱
+                date_header = response.headers.get('Date')
+                if date_header:
+                    server_time = parsedate_to_datetime(date_header)
+                    offset = (server_time - local_mid).total_seconds()
+                    offsets.append(offset)
+                    self.logger.info(f"   측정 {i+1}: 서버={date_header}, offset={offset:.3f}초")
+                
+                time.sleep(0.1)
+            
+            if offsets:
+                avg_offset = sum(offsets) / len(offsets)
+                self.server_time_offset = avg_offset
+                
+                if abs(avg_offset) < 0.5:
+                    self.logger.info(f"✅ 서버-로컬 시간 차이: {avg_offset:.3f}초 (거의 동기화됨)")
+                elif avg_offset > 0:
+                    self.logger.info(f"⚠️ 서버가 로컬보다 {avg_offset:.3f}초 빠름 (더 일찍 새로고침 필요)")
+                else:
+                    self.logger.info(f"⚠️ 서버가 로컬보다 {abs(avg_offset):.3f}초 느림 (더 늦게 새로고침 가능)")
+                
+                return avg_offset
+            else:
+                self.logger.info("⚠️ 서버 시간 측정 실패, 로컬 시간 사용")
+                return 0.0
+                
+        except Exception as e:
+            self.logger.info(f"⚠️ 서버 시간 측정 오류: {e}, 로컬 시간 사용")
+            return 0.0
     
     def login(self) -> bool:
         """Login to KSPO tennis reservation system."""
@@ -311,19 +363,21 @@ class ReservationBot:
             return False
     
     def wait_for_reservation_open(self) -> None:
-        """Wait until 50ms before reservation opens at 09:00 KST.
+        """Wait until reservation opens at 09:00 KST (server time).
 
-        서버가 9시 정각에 바로 준비되지 않을 수 있으므로,
-        9시 0.5초 후에 새로고침합니다.
-        (음수 = 9시 이후, 양수 = 9시 이전)
+        서버 시간과 로컬 시간의 차이를 보정하여 정확한 타이밍에 새로고침합니다.
         """
-        PRE_REFRESH_MS = -500  # 9시 0.5초 후에 새로고침
-        adjusted_target = self.target_time - timedelta(milliseconds=PRE_REFRESH_MS)
+        # 서버 시간 기준으로 정확히 9시에 새로고침
+        # offset 양수 = 서버가 빠름 → 로컬 기준 더 일찍 새로고침 필요
+        # offset 음수 = 서버가 느림 → 로컬 기준 더 늦게 새로고침 가능
+        offset_seconds = self.server_time_offset
         
-        if PRE_REFRESH_MS >= 0:
-            self.logger.info(f"9시 {PRE_REFRESH_MS}ms 전까지 대기 시작...")
-        else:
-            self.logger.info(f"9시 {abs(PRE_REFRESH_MS)}ms 후까지 대기 시작...")
+        # 서버 시간 기준 9시 = 로컬 시간 기준 (9시 - offset)
+        adjusted_target = self.target_time - timedelta(seconds=offset_seconds)
+        
+        self.logger.info(f"⏰ 서버 시간 기준 9시 대기 (offset: {offset_seconds:+.3f}초)")
+        self.logger.info(f"   로컬 기준 목표 시각: {adjusted_target.strftime('%H:%M:%S.%f')[:-3]}")
+        
         current_time = datetime.now(KST)
         time_diff = (adjusted_target - current_time).total_seconds()
         
@@ -331,7 +385,7 @@ class ReservationBot:
             # Wait until 10 seconds before
             if time_diff > 10:
                 sleep_time = time_diff - 10
-                self.logger.info(f"9시 정각까지 {sleep_time:.1f}초 대기...")
+                self.logger.info(f"목표 시각까지 {sleep_time:.1f}초 대기...")
                 time.sleep(sleep_time)
             
             # Precise wait for last 10 seconds
@@ -347,12 +401,11 @@ class ReservationBot:
                     break
                 time.sleep(0.0001)
             
-            if PRE_REFRESH_MS >= 0:
-                self.logger.info(f"🚀 9시 {PRE_REFRESH_MS}ms 전 도달! 새로고침 시작!")
-            else:
-                self.logger.info(f"🚀 9시 {abs(PRE_REFRESH_MS)}ms 후 도달! 새로고침 시작!")
+            actual_time = datetime.now(KST)
+            self.logger.info(f"🚀 목표 시각 도달! 새로고침 시작!")
+            self.logger.info(f"   실제 로컬 시각: {actual_time.strftime('%H:%M:%S.%f')[:-3]}")
         else:
-            self.logger.info("이미 9시가 지났습니다. 즉시 실행합니다.")
+            self.logger.info("이미 목표 시각이 지났습니다. 즉시 실행합니다.")
     
     def refresh_and_wait_for_dates(self) -> bool:
         """Refresh page and wait for available dates."""
@@ -1006,6 +1059,9 @@ class ReservationBot:
             
             # 2. Preload OCR engines (로그인 직후 바로 시작 - 페이지 진입/대기 중 로딩)
             self.captcha_solver.preload()
+            
+            # 2.5 Measure server time offset (서버와 로컬 시간 차이 측정)
+            self.measure_server_time_offset()
             
             # 3. Navigate to reservation page
             if not self.navigate_to_reservation_page():

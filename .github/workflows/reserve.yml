@@ -5,7 +5,7 @@ on:
   # 매일 한국시간 08:45에 실행 (UTC 23:45 전날)
   # GitHub Actions는 5-15분 지연될 수 있으므로 넉넉히 여유를 둠
   schedule:
-    - cron: '45 23 * * *'
+    - cron: '50 23 * * *'
   
   # 수동 실행 지원
   workflow_dispatch:
