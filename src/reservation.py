@@ -710,60 +710,123 @@ class ReservationBot:
         self.logger.info("❌ 예약 가능한 코트가 없음")
         return None
     
-    def solve_captcha_and_confirm(self) -> bool:
-        """Solve CAPTCHA and confirm reservation."""
-        try:
-            self.logger.info("🔍 캡차 이미지 로딩 대기...")
-            
-            # 캡차 이미지가 표시될 때까지 대기 (visibility, not just presence)
-            captcha_element = WebDriverWait(self.driver, 60).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, '//*[@id="layer_captcha_wrap"]/div/img')
+    def solve_captcha_and_confirm(self, max_retries: int = 3) -> bool:
+        """Solve CAPTCHA and confirm reservation with retry logic.
+        
+        Args:
+            max_retries: Maximum number of CAPTCHA attempts (default: 3)
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.logger.info(f"🔍 캡차 시도 {attempt}/{max_retries}...")
+                
+                # 캡차 이미지가 표시될 때까지 대기 (visibility, not just presence)
+                captcha_element = WebDriverWait(self.driver, 60).until(
+                    EC.visibility_of_element_located(
+                        (By.XPATH, '//*[@id="layer_captcha_wrap"]/div/img')
+                    )
                 )
-            )
+                
+                # 이미지가 완전히 로드될 때까지 추가 대기 (width > 0 확인)
+                for _ in range(10):
+                    try:
+                        size = captcha_element.size
+                        if size['width'] > 0 and size['height'] > 0:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
+                
+                # 스크린샷 전 안전을 위한 짧은 대기
+                time.sleep(0.3)
+                
+                # Get CAPTCHA image as PIL Image
+                captcha_image = Image.open(io.BytesIO(captcha_element.screenshot_as_png))
+                
+                # Solve CAPTCHA
+                captcha_result = self.captcha_solver.solve(captcha_image)
+                
+                if not captcha_result:
+                    self.logger.info("❌ 캡차 인식 실패")
+                    if attempt < max_retries:
+                        self._refresh_captcha()
+                    continue
+                
+                # 캡차 입력 필드 초기화 후 입력
+                captcha_input = self.driver.find_element(By.ID, 'captcha')
+                captcha_input.clear()
+                captcha_input.send_keys(captcha_result)
+                self.driver.find_element(By.ID, 'date_confirm').click()
+                self.logger.info(f"✅ 캡차 입력 완료: {captcha_result}")
+                
+                # Wait for alert (success or failure)
+                self.logger.info("💳 알림창 대기 중...")
+                WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+                alert = self.driver.switch_to.alert
+                alert_text = alert.text
+                self.logger.info(f"💳 알림창 감지: {alert_text}")
+                
+                # Check if CAPTCHA was wrong
+                if "자동입력 방지 문자" in alert_text or "다시 입력" in alert_text:
+                    self.logger.info(f"❌ 캡차 틀림 (시도 {attempt}/{max_retries})")
+                    alert.accept()
+                    
+                    if attempt < max_retries:
+                        self._refresh_captcha()
+                    continue
+                
+                # Success - payment confirmation
+                alert.accept()
+                self.logger.info("✅ 결제대기 알림창 확인 완료")
+                return True
+                
+            except Exception as e:
+                self.logger.info(f"❌ 캡차 처리 중 오류 (시도 {attempt}): {e}")
+                if attempt < max_retries:
+                    self._refresh_captcha()
+                continue
+        
+        self.logger.info(f"❌ 캡차 {max_retries}회 시도 모두 실패")
+        return False
+    
+    def _refresh_captcha(self) -> None:
+        """Refresh CAPTCHA image for retry."""
+        try:
+            self.logger.info("🔄 캡차 새로고침...")
             
-            # 이미지가 완전히 로드될 때까지 추가 대기 (width > 0 확인)
-            for _ in range(10):
+            # 캡차 새로고침 버튼 찾기 (일반적인 패턴들)
+            refresh_selectors = [
+                '//*[@id="layer_captcha_wrap"]//a[contains(@onclick, "refresh")]',
+                '//*[@id="layer_captcha_wrap"]//button[contains(@onclick, "refresh")]',
+                '//*[@id="layer_captcha_wrap"]//img[contains(@onclick, "refresh")]',
+                '//a[contains(@onclick, "captcha")]',
+                '//button[contains(text(), "새로고침")]',
+                '//*[@id="layer_captcha_wrap"]/div/a',  # 새로고침 링크
+            ]
+            
+            for selector in refresh_selectors:
                 try:
-                    size = captcha_element.size
-                    if size['width'] > 0 and size['height'] > 0:
-                        break
-                except Exception:
-                    pass
-                time.sleep(0.2)
+                    refresh_btn = self.driver.find_element(By.XPATH, selector)
+                    refresh_btn.click()
+                    self.logger.info("✅ 캡차 새로고침 완료")
+                    time.sleep(0.5)  # 새 이미지 로딩 대기
+                    return
+                except NoSuchElementException:
+                    continue
             
-            # 스크린샷 전 안전을 위한 짧은 대기
-            time.sleep(0.3)
-            
-            # Get CAPTCHA image as PIL Image
-            captcha_image = Image.open(io.BytesIO(captcha_element.screenshot_as_png))
-            
-            # Solve CAPTCHA
-            captcha_result = self.captcha_solver.solve(captcha_image)
-            
-            if not captcha_result:
-                self.logger.info("❌ 캡차 인식 실패")
-                return False
-            
-            # Enter CAPTCHA and confirm
-            self.driver.find_element(By.ID, 'captcha').send_keys(captcha_result)
-            self.driver.find_element(By.ID, 'date_confirm').click()
-            self.logger.info("✅ 캡차 입력 완료")
-            
-            # Wait for payment alert
-            self.logger.info("💳 결제대기 알림창 대기 중...")
-            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-            alert = self.driver.switch_to.alert
-            alert_text = alert.text
-            self.logger.info(f"💳 결제대기 알림창 감지: {alert_text}")
-            alert.accept()
-            self.logger.info("✅ 결제대기 알림창 확인 완료")
-            
-            return True
-            
+            # 새로고침 버튼을 못 찾으면 캡차 이미지 자체를 클릭 시도
+            try:
+                captcha_img = self.driver.find_element(
+                    By.XPATH, '//*[@id="layer_captcha_wrap"]/div/img'
+                )
+                captcha_img.click()
+                self.logger.info("✅ 캡차 이미지 클릭으로 새로고침")
+                time.sleep(0.5)
+            except Exception:
+                self.logger.info("⚠️ 캡차 새로고침 버튼을 찾을 수 없음")
+                
         except Exception as e:
-            self.logger.info(f"❌ OCR 처리 중 오류 발생: {e}")
-            return False
+            self.logger.info(f"⚠️ 캡차 새로고침 실패: {e}")
     
     def verify_reservation(self) -> Tuple[bool, str]:
         """Verify reservation success and get details."""
