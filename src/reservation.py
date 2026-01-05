@@ -366,17 +366,22 @@ class ReservationBot:
         """Wait until reservation opens at 09:00 KST (server time).
 
         서버 시간과 로컬 시간의 차이를 보정하여 정확한 타이밍에 새로고침합니다.
+        HTTP Date 헤더가 초 단위 정밀도만 있어서 안전 마진을 추가합니다.
         """
-        # 서버 시간 기준으로 정확히 9시에 새로고침
+        # 서버 시간 기준으로 9시 + 안전 마진에 새로고침
         # offset 양수 = 서버가 빠름 → 로컬 기준 더 일찍 새로고침 필요
         # offset 음수 = 서버가 느림 → 로컬 기준 더 늦게 새로고침 가능
         offset_seconds = self.server_time_offset
         
-        # 서버 시간 기준 9시 = 로컬 시간 기준 (9시 - offset)
-        adjusted_target = self.target_time - timedelta(seconds=offset_seconds)
+        # 안전 마진: HTTP Date 헤더 정밀도(±1초) + 서버 준비 시간
+        # 서버 시간 9시 0.5초 후에 새로고침 (너무 빠르면 데이터 안 나옴)
+        SAFETY_MARGIN_SECONDS = 0.5
         
-        self.logger.info(f"⏰ 서버 시간 기준 9시 대기 (offset: {offset_seconds:+.3f}초)")
-        self.logger.info(f"   로컬 기준 목표 시각: {adjusted_target.strftime('%H:%M:%S.%f')[:-3]}")
+        # 서버 시간 기준 9시 + 안전마진 = 로컬 시간 기준 (9시 - offset + 안전마진)
+        adjusted_target = self.target_time - timedelta(seconds=offset_seconds) + timedelta(seconds=SAFETY_MARGIN_SECONDS)
+        
+        self.logger.info(f"⏰ 서버 시간 기준 9시 대기 (offset: {offset_seconds:+.3f}초, 안전마진: +{SAFETY_MARGIN_SECONDS}초)")
+        self.logger.info(f"   로컬 기준 목표 시각: {adjusted_target.strftime('%H:%M:%S.%f')[:-3]} (서버 9시 {SAFETY_MARGIN_SECONDS}초 후)")
         
         current_time = datetime.now(KST)
         time_diff = (adjusted_target - current_time).total_seconds()
