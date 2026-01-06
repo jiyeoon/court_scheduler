@@ -833,8 +833,15 @@ class ReservationBot:
         except Exception as e:
             self.logger.info(f"⚠️ 캡차 새로고침 실패: {e}")
     
-    def verify_reservation(self) -> Tuple[bool, str]:
-        """Verify reservation success and get details."""
+    def verify_reservation(self) -> Tuple[bool, str, bool]:
+        """Verify reservation success and get details.
+        
+        Returns:
+            Tuple of (success, message, should_retry)
+            - success: True if reservation was successful
+            - message: Cart contents or error message
+            - should_retry: True if should try another court/time (e.g., "다른 사용자가 예약중")
+        """
         try:
             self.logger.info("📋 예약 확인 알림 처리")
             
@@ -843,9 +850,15 @@ class ReservationBot:
                 alert = self.driver.switch_to.alert
                 alert_text = alert.text
                 self.logger.info(f"❌ 추가 알림창 감지: {alert_text}")
-                self.logger.info("⚠️ 추가 알림창이 있으면 보통 예약이 실패한 것입니다!")
                 alert.accept()
-                return False, alert_text
+                
+                # 다른 사용자가 예약 진행중인 경우 재시도 가능
+                if "다른 사용자" in alert_text or "예약을 진행" in alert_text:
+                    self.logger.info("⚠️ 다른 사용자가 예약 진행중 → 다른 코트/시간 시도 필요!")
+                    return False, alert_text, True  # should_retry=True
+                
+                self.logger.info("⚠️ 예약 실패 (재시도 불가)")
+                return False, alert_text, False
             except NoAlertPresentException:
                 self.logger.info("ℹ️ 추가 알림창 없음 - 예약 진행 중")
             
@@ -864,11 +877,24 @@ class ReservationBot:
             self.logger.info("🎉 장바구니 담기 성공!")
             self.logger.info(f"📝 예약 내용: {message}")
             
-            return True, message
+            return True, message, False
             
         except Exception as e:
-            self.logger.info(f"⚠️ 장바구니 확인 실패: {e}")
-            return False, str(e)
+            error_str = str(e)
+            self.logger.info(f"⚠️ 장바구니 확인 실패: {error_str}")
+            
+            # Alert에서 "다른 사용자가 예약을 진행중입니다" 감지
+            if "다른 사용자" in error_str or "예약을 진행" in error_str:
+                self.logger.info("⚠️ 다른 사용자가 예약 진행중 → 다른 코트/시간 시도 필요!")
+                # Alert 처리
+                try:
+                    alert = self.driver.switch_to.alert
+                    alert.accept()
+                except:
+                    pass
+                return False, error_str, True  # should_retry=True
+            
+            return False, error_str, False
     
     def _debug_page_info(self) -> None:
         """Collect debug information when error occurs."""
@@ -1029,18 +1055,30 @@ class ReservationBot:
             self._dismiss_alert_if_present()
             return False, None, []
     
-    def _try_strategy(self, strategy, selected_date: str) -> Tuple[bool, Optional[int], Optional[str]]:
+    def _try_strategy(
+        self, 
+        strategy, 
+        selected_date: str,
+        exclude_courts: set = None
+    ) -> Tuple[bool, Optional[int], Optional[str], List[int]]:
         """
         Try a single reservation strategy.
         
         Args:
             strategy: ReservationStrategy to try
             selected_date: Already selected date
+            exclude_courts: Set of court numbers to exclude (already failed)
             
         Returns:
-            Tuple of (success, court_number, error_message)
+            Tuple of (success, court_number, error_message, common_courts_remaining)
+            common_courts_remaining: 남은 교집합 코트 목록 (재시도용)
         """
+        if exclude_courts is None:
+            exclude_courts = set()
+        
         self.logger.info(f"🎯 전략 시도: {strategy.name}")
+        if exclude_courts:
+            self.logger.info(f"   └ 제외 코트: {list(exclude_courts)}")
         
         if strategy.auto_find_latest:
             # 자동 탐색: 가능한 시간대를 뒤에서부터 반복 시도
@@ -1054,9 +1092,12 @@ class ReservationBot:
                     exclude_hours=tried_hours
                 )
                 if not success:
-                    return False, None, "가능한 연속 시간대 없음"
+                    return False, None, "가능한 연속 시간대 없음", []
                 
                 tried_hours.add(found_hour)
+                
+                # 제외 코트 필터링
+                common_courts = [c for c in common_courts if c not in exclude_courts]
                 
                 # 2. 교집합 코트가 없으면 다음 시간대 시도
                 if not common_courts:
@@ -1064,11 +1105,13 @@ class ReservationBot:
                     self.logger.info(f"🔄 {found_hour}시-{found_hour + strategy.time_slot_count}시에서 교집합 코트 없음, 다음 시간대 시도...")
                     continue
                 
-                # 3. 교집합 코트에서 선택 시도
-                selected_court = self.select_court_from_common(common_courts)
+                # 3. 교집합 코트에서 선택 시도 (첫 번째 코트만)
+                selected_court = self.select_court_from_common([common_courts[0]])
                 if selected_court:
+                    # 남은 코트 목록 반환 (재시도용)
+                    remaining = common_courts[1:] if len(common_courts) > 1 else []
                     self.logger.info(f"✅ 전략 '{strategy.name}' 성공: {found_hour}시-{found_hour + strategy.time_slot_count}시, 코트 {selected_court}")
-                    return True, selected_court, None
+                    return True, selected_court, None, remaining
                 
                 # 4. 코트 선택 실패시 시간 선택 취소하고 다음 시간대 시도
                 self._clear_time_selections()
@@ -1081,21 +1124,26 @@ class ReservationBot:
                 preferred_courts=strategy.preferred_courts
             )
             if not success:
-                return False, None, f"{strategy.target_hour}시 시간대 선택 실패"
+                return False, None, f"{strategy.target_hour}시 시간대 선택 실패", []
+            
+            # 제외 코트 필터링
+            common_courts = [c for c in common_courts if c not in exclude_courts]
             
             # 교집합 코트가 없으면 실패
             if not common_courts:
                 self._clear_time_selections()
-                return False, None, f"{strategy.target_hour}시 시간대에서 교집합 코트 없음"
+                return False, None, f"{strategy.target_hour}시 시간대에서 교집합 코트 없음 (또는 모두 제외됨)", []
             
-            # 교집합 코트에서 선택 시도
-            selected_court = self.select_court_from_common(common_courts)
+            # 교집합 코트에서 선택 시도 (첫 번째 코트만)
+            selected_court = self.select_court_from_common([common_courts[0]])
             if not selected_court:
                 self._clear_time_selections()
-                return False, None, f"코트 선택 실패 (대상: {strategy.preferred_courts})"
+                return False, None, f"코트 선택 실패 (대상: {common_courts[0]})", common_courts[1:]
             
+            # 남은 코트 목록 반환 (재시도용)
+            remaining = common_courts[1:] if len(common_courts) > 1 else []
             self.logger.info(f"✅ 전략 '{strategy.name}' 성공: 코트 {selected_court}")
-            return True, selected_court, None
+            return True, selected_court, None, remaining
     
     def run(self) -> int:
         """
@@ -1155,68 +1203,110 @@ class ReservationBot:
             
             result.date = selected_date
             
-            # 7. Try each strategy in order
-            selected_court = None
-            selected_time_slot = ""
-            successful_strategy = None
+            # 7. Try each strategy in order (with retry on "다른 사용자 예약중")
+            # 같은 시간대에서 다른 코트 먼저 시도 → 모두 실패 시 다음 전략
             last_error = ""
+            strategy_index = 0
+            MAX_TOTAL_RETRIES = 30  # 전체 재시도 횟수 제한
+            total_retries = 0
+            exclude_courts_per_strategy = {}  # 전략별 제외 코트
             
-            for strategy in strategies:
-                result.tried_strategies.append(strategy.name)
-                success, court, error = self._try_strategy(strategy, selected_date)
-                if success:
-                    selected_court = court
-                    successful_strategy = strategy
-                    # 시간대 정보 생성
-                    if strategy.auto_find_latest:
-                        selected_time_slot = "자동 탐색된 시간"
-                    else:
-                        selected_time_slot = f"{strategy.target_hour}:00-{strategy.target_hour + strategy.time_slot_count}:00"
-                    break
-                else:
+            while strategy_index < len(strategies) and total_retries < MAX_TOTAL_RETRIES:
+                strategy = strategies[strategy_index]
+                
+                if strategy.name not in result.tried_strategies:
+                    result.tried_strategies.append(strategy.name)
+                
+                # 해당 전략에서 제외할 코트 목록
+                exclude_courts = exclude_courts_per_strategy.get(strategy.name, set())
+                
+                success, court, error, remaining_courts = self._try_strategy(
+                    strategy, selected_date, exclude_courts
+                )
+                
+                if not success:
                     last_error = error
                     self.logger.info(f"⚠️ 전략 '{strategy.name}' 실패: {error}")
                     self.logger.info("🔄 다음 전략 시도...")
+                    strategy_index += 1
+                    continue
+                
+                # 코트 선택 성공!
+                selected_court = court
+                successful_strategy = strategy
+                
+                # 시간대 정보 생성
+                if strategy.auto_find_latest:
+                    selected_time_slot = "자동 탐색된 시간"
+                else:
+                    selected_time_slot = f"{strategy.target_hour}:00-{strategy.target_hour + strategy.time_slot_count}:00"
+                
+                # 결과 정보 업데이트
+                result.court_number = selected_court
+                result.time_slot = selected_time_slot
+                result.strategy_name = successful_strategy.name
+                result.court_type = "실내 코트" if selected_court in INDOOR_COURTS else "야외 코트"
+                if self.selected_date_str:
+                    result.date = self.selected_date_str
+                
+                self.logger.info("✅ 코트 선택 완료, OCR 처리 시작")
+                
+                # 8. Solve CAPTCHA and confirm
+                if not self.solve_captcha_and_confirm():
+                    last_error = "캡차 인식 또는 확인 실패"
+                    self.logger.info(f"⚠️ {last_error}")
+                    # 캡차 실패 시 해당 코트 제외하고 재시도
+                    if strategy.name not in exclude_courts_per_strategy:
+                        exclude_courts_per_strategy[strategy.name] = set()
+                    exclude_courts_per_strategy[strategy.name].add(selected_court)
+                    total_retries += 1
+                    continue  # 같은 전략 재시도
+                
+                # 9. Verify reservation
+                success, message, should_retry = self.verify_reservation()
+                
+                if success:
+                    result.success = True
+                    self.notifier.send_success(message, result)
+                    self.logger.info("=" * 50)
+                    self.logger.info("✅ 예약 성공!")
+                    self.logger.info(f"📅 날짜: {result.date}")
+                    self.logger.info(f"⏰ 시간: {result.time_slot}")
+                    self.logger.info(f"🎾 코트: {result.court_number}번 ({result.court_type})")
+                    self.logger.info("=" * 50)
+                    return 0
+                
+                # 예약 실패
+                if should_retry:
+                    # "다른 사용자가 예약을 진행중입니다" 등
+                    # 같은 시간대에서 다른 코트 먼저 시도!
+                    if strategy.name not in exclude_courts_per_strategy:
+                        exclude_courts_per_strategy[strategy.name] = set()
+                    exclude_courts_per_strategy[strategy.name].add(selected_court)
+                    
+                    self.logger.info(f"🔄 코트 {selected_court} 제외, 같은 시간대 다른 코트 시도...")
+                    self.logger.info(f"   └ 남은 교집합 코트: {remaining_courts}")
+                    
+                    total_retries += 1
+                    
+                    # 남은 교집합 코트가 있으면 같은 전략 재시도
+                    if remaining_courts:
+                        continue  # 같은 전략, 다른 코트로 재시도
+                    else:
+                        # 같은 전략의 모든 코트 소진 → 다음 전략
+                        self.logger.info(f"⚠️ 전략 '{strategy.name}'의 모든 코트 소진, 다음 전략으로...")
+                        strategy_index += 1
+                        continue
+                else:
+                    # 재시도 불가능한 실패
+                    result.error_message = f"예약 확인 실패: {message}"
+                    self.notifier.send_failure(f"예약 확인 실패: {message}", result)
+                    return 1
             
-            if not selected_court:
-                result.error_message = f"모든 전략 실패. 마지막 오류: {last_error}"
-                self.notifier.send_failure(f"모든 전략 실패. 마지막 오류: {last_error}", result)
-                return 1
-            
-            # 결과 정보 업데이트
-            result.court_number = selected_court
-            result.time_slot = selected_time_slot
-            result.strategy_name = successful_strategy.name
-            result.court_type = "실내 코트" if selected_court in INDOOR_COURTS else "야외 코트"
-            # 시간 슬롯 label에서 추출한 정확한 날짜 정보로 업데이트
-            if self.selected_date_str:
-                result.date = self.selected_date_str
-            
-            self.logger.info("✅ 코트 선택 완료, OCR 처리 시작")
-            
-            # 8. Solve CAPTCHA and confirm
-            if not self.solve_captcha_and_confirm():
-                result.error_message = "캡차 인식 또는 확인 실패"
-                self.notifier.send_failure("캡차 인식 또는 확인 실패", result)
-                return 1
-            
-            # 9. Verify reservation
-            success, message = self.verify_reservation()
-            
-            if success:
-                result.success = True
-                self.notifier.send_success(message, result)
-                self.logger.info("=" * 50)
-                self.logger.info("✅ 예약 성공!")
-                self.logger.info(f"📅 날짜: {result.date}")
-                self.logger.info(f"⏰ 시간: {result.time_slot}")
-                self.logger.info(f"🎾 코트: {result.court_number}번 ({result.court_type})")
-                self.logger.info("=" * 50)
-                return 0
-            else:
-                result.error_message = f"예약 확인 실패: {message}"
-                self.notifier.send_failure(f"예약 확인 실패: {message}", result)
-                return 1
+            # 모든 전략 실패
+            result.error_message = f"모든 전략 실패. 마지막 오류: {last_error}"
+            self.notifier.send_failure(f"모든 전략 실패. 마지막 오류: {last_error}", result)
+            return 1
                 
         except Exception as e:
             self.logger.info(f"💥 예외 발생: {e}")
