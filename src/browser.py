@@ -39,6 +39,9 @@ def create_driver(config: Config) -> webdriver.Chrome:
     """
     options = Options()
     
+    # 🚀 페이지 로드 전략: eager = DOM만 로드되면 진행 (이미지/CSS 기다리지 않음)
+    options.page_load_strategy = 'eager'
+    
     # 디스플레이 상태에 따라 headless 모드 결정
     # 로컬 환경(디스플레이 있음)에서는 GUI 모드로 실행
     if is_display_available():

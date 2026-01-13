@@ -374,8 +374,8 @@ class ReservationBot:
         offset_seconds = self.server_time_offset
         
         # 안전 마진: HTTP Date 헤더 정밀도(±1초) + 서버 준비 시간
-        # 서버 시간 9시 0.3초 후에 새로고침 (빠르게 but 안전하게)
-        SAFETY_MARGIN_SECONDS = 0.1
+        # 서버 시간 9시 0.2초 후에 새로고침
+        SAFETY_MARGIN_SECONDS = 0.2
         
         # 서버 시간 기준 9시 + 안전마진 = 로컬 시간 기준 (9시 - offset + 안전마진)
         adjusted_target = self.target_time - timedelta(seconds=offset_seconds) + timedelta(seconds=SAFETY_MARGIN_SECONDS)

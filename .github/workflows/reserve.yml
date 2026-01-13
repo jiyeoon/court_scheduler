@@ -2,10 +2,12 @@
 name: Court Scheduler
 
 on:
-  # 매일 한국시간 08:45에 실행 (UTC 23:45 전날)
   # GitHub Actions는 5-15분 지연될 수 있으므로 넉넉히 여유를 둠
   schedule:
+    # 매일 한국시간 08:50에 실행 (UTC 23:50 전날) - 09:00 예약용
     - cron: '50 23 * * *'
+    # 매일 한국시간 09:19에 실행 (UTC 00:19) - 09:30 예약용 (또는 추가 시도)
+    - cron: '19 0 * * *'
   
   # 수동 실행 지원
   workflow_dispatch:
