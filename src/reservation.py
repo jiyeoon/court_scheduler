@@ -244,10 +244,10 @@ class ReservationBot:
             offset in seconds (양수 = 서버가 로컬보다 빠름)
         """
         try:
-            self.logger.info("🕐 서버 시간 측정 중...")
+            self.logger.info("🕐 서버 시간 측정 중 (5회, 보수적 최솟값 사용)...")
             
             offsets = []
-            for i in range(3):  # 3회 측정 후 평균
+            for i in range(5):  # 5회 측정
                 local_before = datetime.now(timezone.utc)
                 response = requests.head(self.config.base_url, timeout=5)
                 local_after = datetime.now(timezone.utc)
@@ -261,22 +261,26 @@ class ReservationBot:
                     server_time = parsedate_to_datetime(date_header)
                     offset = (server_time - local_mid).total_seconds()
                     offsets.append(offset)
-                    self.logger.info(f"   측정 {i+1}: 서버={date_header}, offset={offset:.3f}초")
+                    self.logger.info(f"   측정 {i+1}: offset={offset:.3f}초")
                 
-                time.sleep(0.1)
+                time.sleep(0.05)  # 더 빠르게 측정
             
             if offsets:
-                avg_offset = sum(offsets) / len(offsets)
-                self.server_time_offset = avg_offset
+                # 최솟값 사용 (보수적 - 확실히 서버 9시 이후에 새로고침)
+                min_offset = min(offsets)
+                self.server_time_offset = min_offset
                 
-                if abs(avg_offset) < 0.5:
-                    self.logger.info(f"✅ 서버-로컬 시간 차이: {avg_offset:.3f}초 (거의 동기화됨)")
-                elif avg_offset > 0:
-                    self.logger.info(f"⚠️ 서버가 로컬보다 {avg_offset:.3f}초 빠름 (더 일찍 새로고침 필요)")
+                self.logger.info(f"📊 측정 결과: {[f'{o:.3f}' for o in offsets]}")
+                self.logger.info(f"📊 최솟값: {min_offset:.3f}초 (보수적), 평균: {sum(offsets)/len(offsets):.3f}초")
+                
+                if abs(min_offset) < 0.5:
+                    self.logger.info(f"✅ 서버-로컬 시간 차이: {min_offset:.3f}초 (거의 동기화됨)")
+                elif min_offset > 0:
+                    self.logger.info(f"⚠️ 서버가 로컬보다 {min_offset:.3f}초 빠름")
                 else:
-                    self.logger.info(f"⚠️ 서버가 로컬보다 {abs(avg_offset):.3f}초 느림 (더 늦게 새로고침 가능)")
+                    self.logger.info(f"⚠️ 서버가 로컬보다 {abs(min_offset):.3f}초 느림")
                 
-                return avg_offset
+                return min_offset
             else:
                 self.logger.info("⚠️ 서버 시간 측정 실패, 로컬 시간 사용")
                 return 0.0
