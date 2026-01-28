@@ -367,28 +367,18 @@ class ReservationBot:
             return False
     
     def wait_for_reservation_open(self) -> None:
-        """Wait until reservation opens at 09:00 KST (server time).
-
-        서버 시간과 로컬 시간의 차이를 보정하여 정확한 타이밍에 새로고침합니다.
-        HTTP Date 헤더가 초 단위 정밀도만 있어서 안전 마진을 추가합니다.
+        """Wait until reservation opens at 09:00:00.100 KST (local time).
+        
+        단순하게 로컬 시간 9시 0.1초에 새로고침합니다.
+        서버 준비 시간을 고려한 안전한 마진입니다.
         """
-        # 서버 시간 기준으로 9시 + 안전 마진에 새로고침
-        # offset 양수 = 서버가 빠름 → 로컬 기준 더 일찍 새로고침 필요
-        # offset 음수 = 서버가 느림 → 로컬 기준 더 늦게 새로고침 가능
-        offset_seconds = self.server_time_offset
+        # 로컬 시간 9:00:00.100에 새로고침 (100ms 마진)
+        target_time = self.target_time.replace(microsecond=100000)  # 0.100초 = 100,000 마이크로초
         
-        # 안전 마진: HTTP Date 헤더 정밀도(±1초) + 서버 준비 시간
-        # 서버 시간 9시 0.1초 후에 새로고침
-        SAFETY_MARGIN_SECONDS = 0.1
-        
-        # 서버 시간 기준 9시 + 안전마진 = 로컬 시간 기준 (9시 - offset + 안전마진)
-        adjusted_target = self.target_time - timedelta(seconds=offset_seconds) + timedelta(seconds=SAFETY_MARGIN_SECONDS)
-        
-        self.logger.info(f"⏰ 서버 시간 기준 9시 대기 (offset: {offset_seconds:+.3f}초, 안전마진: +{SAFETY_MARGIN_SECONDS}초)")
-        self.logger.info(f"   로컬 기준 목표 시각: {adjusted_target.strftime('%H:%M:%S.%f')[:-3]} (서버 9시 {SAFETY_MARGIN_SECONDS}초 후)")
+        self.logger.info(f"⏰ 로컬 시간 9시 대기 (목표: {target_time.strftime('%H:%M:%S.%f')[:-3]})")
         
         current_time = datetime.now(KST)
-        time_diff = (adjusted_target - current_time).total_seconds()
+        time_diff = (target_time - current_time).total_seconds()
         
         if time_diff > 0:
             # Wait until 10 seconds before
@@ -402,7 +392,7 @@ class ReservationBot:
             loop_count = 0
             while True:
                 current_time = datetime.now(KST)
-                if current_time >= adjusted_target:
+                if current_time >= target_time:
                     break
                 loop_count += 1
                 if loop_count > 20000000:  # Prevent infinite loop
@@ -1179,9 +1169,6 @@ class ReservationBot:
             
             # 2. Preload OCR engines (로그인 직후 바로 시작 - 페이지 진입/대기 중 로딩)
             self.captcha_solver.preload()
-            
-            # 2.5 Measure server time offset (서버와 로컬 시간 차이 측정)
-            self.measure_server_time_offset()
             
             # 3. Navigate to reservation page
             if not self.navigate_to_reservation_page():

@@ -85,7 +85,7 @@ jobs:
               print(f'💡 권장 PRE_REFRESH_MS: {mean(rtts):.0f}ms')
           "
       
-      - name: Run reservation bot
+      - name: Run reservation bot (Hybrid)
         env:
           LOGIN_ID: ${{ secrets.LOGIN_ID }}
           LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
@@ -93,7 +93,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           SLACK_URL: ${{ secrets.SLACK_URL }}
         run: |
-          python -m src.main
+          python -m src.main_hybrid
       
       - name: Upload screenshots on failure
         if: failure()
