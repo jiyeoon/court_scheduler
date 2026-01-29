@@ -1030,28 +1030,29 @@ class HybridReservationBot:
             # OCR 엔진 사전 로딩
             self.captcha_solver.preload()
             
-            # 예약 페이지 진입 (WebGate 통과)
+            # ====== PHASE 2: 9시까지 대기 (예약 페이지 진입 전!) ======
+            self.logger.info("\n📌 PHASE 2: 예약 오픈 대기 (메인 페이지)")
+            self.wait_for_reservation_open()
+            
+            # ====== PHASE 3: 9시 이후 예약 페이지 진입 (WebGate) ======
+            self.logger.info("\n📌 PHASE 3: 예약 페이지 진입 (WebGate 통과)")
             if not self.navigate_to_reservation_page():
                 result.error_message = "예약 페이지 진입 실패"
                 self.notifier.send_failure("예약 페이지 진입 실패", result)
                 return 1
             
-            # ====== PHASE 2: 쿠키 추출 ======
-            self.logger.info("\n📌 PHASE 2: 쿠키 추출")
+            # ====== PHASE 4: 쿠키 추출 ======
+            self.logger.info("\n📌 PHASE 4: 쿠키 추출")
             
             if not self.extract_cookies_to_session():
                 result.error_message = "쿠키 추출 실패"
                 self.notifier.send_failure("쿠키 추출 실패", result)
                 return 1
             
-            # ====== PHASE 3: 9시까지 대기 ======
-            self.logger.info("\n📌 PHASE 3: 예약 오픈 대기")
-            self.wait_for_reservation_open()
+            # ====== PHASE 5: HTTP API로 빠른 예약 ======
+            self.logger.info("\n📌 PHASE 5: HTTP API 예약 시작")
             
-            # ====== PHASE 4: HTTP API로 빠른 예약 ======
-            self.logger.info("\n📌 PHASE 4: HTTP API 예약 시작")
-            
-            # 4.1 캘린더 API로 날짜 및 xDay 획득
+            # 5.1 캘린더 API로 날짜 및 xDay 획득
             start_time = time.time()
             calendar_data = self.api_get_calendar()
             
@@ -1085,14 +1086,14 @@ class HybridReservationBot:
             
             result.date = target_date
             
-            # 4.2 Selenium으로 날짜 선택 (시간 슬롯 표시를 위해)
-            self.logger.info("\n📌 PHASE 4.5: Selenium 날짜 선택")
+            # 5.2 Selenium으로 날짜 선택 (시간 슬롯 표시를 위해)
+            self.logger.info("\n📌 PHASE 5.5: Selenium 날짜 선택")
             if not self.select_date_with_selenium(target_date_normalized):
                 result.error_message = "Selenium 날짜 선택 실패"
                 self.notifier.send_failure("Selenium 날짜 선택 실패", result)
                 return 1
             
-            # 4.3 각 전략별로 예약 시도
+            # 5.3 각 전략별로 예약 시도
             for strategy in strategies:
                 self.logger.info(f"\n🎯 전략 시도: {strategy.name}")
                 
