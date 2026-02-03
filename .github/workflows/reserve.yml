@@ -2,12 +2,15 @@
 name: Court Scheduler
 
 on:
-  # GitHub Actions cron은 5-30분 지연으로 9시 예약에 부적합
-  # 로컬 launchctl이 훨씬 정확하므로 cron 비활성화
-  # schedule:
-  #   - cron: '30 23 * * *'  # 한국시간 08:30
+  # GitHub Actions cron은 5-30분 지연 가능하므로 넉넉히 여유를 둠
+  # 로컬 맥북 못 킬 때 백업용
+  schedule:
+    # 매일 한국시간 08:20에 실행 (UTC 23:20 전날) - 지연 감안하여 일찍 시작
+    - cron: '20 23 * * *'
+    # 매일 한국시간 09:19에 실행 (UTC 00:19) - 09:30 예약용 (또는 추가 시도)
+    - cron: '19 0 * * *'
   
-  # 수동 실행만 지원 (테스트/백업용)
+  # 수동 실행 지원
   workflow_dispatch:
 
 env:
