@@ -20,7 +20,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoAlertPresentException
+from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException
 
 from .config import Config, INDOOR_COURTS
 from .notifier import Logger, SlackNotifier, ReservationResult
@@ -590,8 +590,8 @@ class HybridReservationBot:
     # =========================================================================
     
     def wait_for_reservation_open(self) -> None:
-        """로컬 시간 9:00:00.100에 대기합니다."""
-        # 로컬 시간 9:00:00.100에 시작 (100ms 마진)
+        """로컬 시간 9:00:00.100에 페이지를 새로고침합니다."""
+        # 로컬 시간 9:00:00.100에 새로고침 (100ms 마진)
         target_time = self.target_time.replace(microsecond=100000)  # 0.100초 = 100,000 마이크로초
         
         self.logger.info(f"⏰ 로컬 시간 9시 대기 (목표: {target_time.strftime('%H:%M:%S.%f')[:-3]})")
@@ -610,10 +610,27 @@ class HybridReservationBot:
                 time.sleep(0.0001)
             
             actual_time = datetime.now(KST)
-            self.logger.info(f"🚀 목표 시각 도달! API 호출 시작!")
+            self.logger.info(f"🚀 목표 시각 도달! 새로고침 시작!")
             self.logger.info(f"   실제 로컬 시각: {actual_time.strftime('%H:%M:%S.%f')[:-3]}")
         else:
             self.logger.info("이미 목표 시각이 지났습니다. 즉시 실행합니다.")
+        
+        # 페이지 새로고침
+        self.logger.info("🔄 페이지 새로고침")
+        self.driver.refresh()
+        self.logger.info("✅ 페이지 새로고침 완료")
+        
+        # 예약 페이지 로딩 대기 (날짜 링크 표시될 때까지)
+        self.logger.info("📅 예약 가능한 날짜 로딩 대기...")
+        try:
+            WebDriverWait(self.driver, 30).until(
+                EC.presence_of_all_elements_located(
+                    (By.XPATH, "//tbody//a[starts-with(@href, 'javascript:fn_tennis_time_list')]")
+                )
+            )
+            self.logger.info("✅ 날짜 로딩 완료")
+        except Exception as e:
+            self.logger.info(f"⚠️ 날짜 로딩 대기 중 오류: {e}")
     
     def find_available_slots(
         self,
@@ -686,25 +703,46 @@ class HybridReservationBot:
         try:
             self.logger.info(f"📅 Selenium으로 날짜 선택: {target_date}")
             
-            # 예약 가능한 날짜 링크 찾기
-            clickable_dates = self.driver.find_elements(
-                By.XPATH,
-                "//tbody//a[starts-with(@href, 'javascript:fn_tennis_time_list')]"
+            # WebGate 통과 후 페이지 안정화 대기
+            self.logger.info("   └ 페이지 안정화 대기...")
+            WebDriverWait(self.driver, 10).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
             )
+            time.sleep(0.5)  # 추가 안정화 시간
             
-            self.logger.info(f"   └ 클릭 가능한 날짜: {len(clickable_dates)}개")
-            
-            if not clickable_dates:
-                self.logger.info("❌ 클릭 가능한 날짜가 없음")
-                return False
-            
-            # 마지막 날짜 클릭 (가장 나중 날짜)
-            target = clickable_dates[-1]
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", target)
-            time.sleep(0.1)
-            self.driver.execute_script("arguments[0].click();", target)
-            
-            self.logger.info(f"✅ 날짜 클릭 완료")
+            # Stale element 방지: 최대 3회 재시도
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # 예약 가능한 날짜 링크 찾기 (매번 새로 찾기!)
+                    clickable_dates = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_all_elements_located((
+                            By.XPATH,
+                            "//tbody//a[starts-with(@href, 'javascript:fn_tennis_time_list')]"
+                        ))
+                    )
+                    
+                    self.logger.info(f"   └ 클릭 가능한 날짜: {len(clickable_dates)}개")
+                    
+                    if not clickable_dates:
+                        self.logger.info("❌ 클릭 가능한 날짜가 없음")
+                        return False
+                    
+                    # 마지막 날짜 클릭 (가장 나중 날짜)
+                    target = clickable_dates[-1]
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", target)
+                    time.sleep(0.1)
+                    self.driver.execute_script("arguments[0].click();", target)
+                    
+                    self.logger.info(f"✅ 날짜 클릭 완료")
+                    break  # 성공하면 루프 탈출
+                    
+                except StaleElementReferenceException:
+                    if attempt < max_retries - 1:
+                        self.logger.info(f"   └ Element stale, 재시도 {attempt + 1}/{max_retries}")
+                        time.sleep(0.3)
+                    else:
+                        raise  # 마지막 시도에서도 실패하면 예외 발생
             
             # 시간 슬롯 로딩 대기
             self.logger.info(f"   └ 시간 슬롯 로딩 대기 중...")
@@ -1030,16 +1068,16 @@ class HybridReservationBot:
             # OCR 엔진 사전 로딩
             self.captcha_solver.preload()
             
-            # ====== PHASE 2: 9시까지 대기 (예약 페이지 진입 전!) ======
-            self.logger.info("\n📌 PHASE 2: 예약 오픈 대기 (메인 페이지)")
-            self.wait_for_reservation_open()
-            
-            # ====== PHASE 3: 9시 이후 예약 페이지 진입 (WebGate) ======
-            self.logger.info("\n📌 PHASE 3: 예약 페이지 진입 (WebGate 통과)")
+            # ====== PHASE 2: 예약 페이지 진입 (WebGate 통과) ======
+            self.logger.info("\n📌 PHASE 2: 예약 페이지 진입 (WebGate 통과)")
             if not self.navigate_to_reservation_page():
                 result.error_message = "예약 페이지 진입 실패"
                 self.notifier.send_failure("예약 페이지 진입 실패", result)
                 return 1
+            
+            # ====== PHASE 3: 9시까지 대기 + 새로고침 ======
+            self.logger.info("\n📌 PHASE 3: 예약 오픈 대기 + 새로고침")
+            self.wait_for_reservation_open()
             
             # ====== PHASE 4: 쿠키 추출 ======
             self.logger.info("\n📌 PHASE 4: 쿠키 추출")
