@@ -13,7 +13,7 @@ load_dotenv()
 
 # 코트 분류
 INDOOR_COURTS = [5, 6, 7, 8]  # 실내 코트 (21시까지만 운영)
-OUTDOOR_COURTS = [19, 18, 2, 13, 17, 16, 15, 14, 12, 11, 10, 9, 4, 3]  # 야외 코트
+OUTDOOR_COURTS = [15, 14, 19, 18, 2, 13, 17, 16, 12, 11, 10, 9, 4, 3]  # 야외 코트
 ALL_COURTS = INDOOR_COURTS + OUTDOOR_COURTS  # 모든 코트
 
 
