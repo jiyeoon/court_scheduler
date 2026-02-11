@@ -1080,54 +1080,30 @@ class HybridReservationBot:
                 self.notifier.send_failure("로그인 실패", result)
                 return 1
             
-            # OCR 엔진 사전 로딩 (로그인 직후, WebGate 진입 전)
+            # OCR 엔진 사전 로딩 (로그인 직후)
             self.captcha_solver.preload()
             
-            # ====== PHASE 2: 8:59까지 대기 (예약 페이지 진입 전) ======
-            self.logger.info("\n📌 PHASE 2: 8:59까지 대기")
-            entry_time = self.target_time.replace(second=0, microsecond=0) - timedelta(minutes=1)  # 9:00 - 1분 = 8:59:00
-            self.logger.info(f"⏰ 예약 페이지 진입 시각 대기 (목표: {entry_time.strftime('%H:%M:%S')})")
-            
-            current_time = datetime.now(KST)
-            time_diff = (entry_time - current_time).total_seconds()
-            
-            if time_diff > 0:
-                if time_diff > 10:
-                    sleep_time = time_diff - 10
-                    self.logger.info(f"💤 진입 시각까지 {sleep_time:.1f}초 대기...")
-                    time.sleep(sleep_time)
-                
-                self.logger.info("🎯 마지막 10초 정밀 대기 시작...")
-                while datetime.now(KST) < entry_time:
-                    time.sleep(0.0001)
-                
-                actual_time = datetime.now(KST)
-                self.logger.info(f"🚀 진입 시각 도달! 예약 페이지 진입 시작!")
-                self.logger.info(f"   실제 로컬 시각: {actual_time.strftime('%H:%M:%S.%f')[:-3]}")
-            else:
-                self.logger.info("이미 진입 시각이 지났습니다. 즉시 진입합니다.")
-            
-            # ====== PHASE 3: 예약 페이지 진입 (WebGate 통과) ======
-            self.logger.info("\n📌 PHASE 3: 예약 페이지 진입 (WebGate 통과)")
+            # ====== PHASE 2: 예약 페이지 진입 (9시 이전 진입) ======
+            self.logger.info("\n📌 PHASE 2: 예약 페이지 진입 (9시 이전 진입)")
             if not self.navigate_to_reservation_page():
                 result.error_message = "예약 페이지 진입 실패"
                 self.notifier.send_failure("예약 페이지 진입 실패", result)
                 return 1
             
-            # ====== PHASE 4: 9:00까지 대기 + 새로고침 ======
-            self.logger.info("\n📌 PHASE 4: 9:00 대기 + 새로고침")
+            # ====== PHASE 3: 9:00까지 대기 + 새로고침 ======
+            self.logger.info("\n📌 PHASE 3: 9:00 대기 + 새로고침")
             self.wait_for_reservation_open()
             
-            # ====== PHASE 5: 쿠키 추출 ======
-            self.logger.info("\n📌 PHASE 5: 쿠키 추출")
+            # ====== PHASE 4: 쿠키 추출 ======
+            self.logger.info("\n📌 PHASE 4: 쿠키 추출")
             
             if not self.extract_cookies_to_session():
                 result.error_message = "쿠키 추출 실패"
                 self.notifier.send_failure("쿠키 추출 실패", result)
                 return 1
             
-            # ====== PHASE 6: HTTP API로 빠른 예약 ======
-            self.logger.info("\n📌 PHASE 6: HTTP API 예약 시작")
+            # ====== PHASE 5: HTTP API로 빠른 예약 ======
+            self.logger.info("\n📌 PHASE 5: HTTP API 예약 시작")
             
             # 5.1 캘린더 API로 날짜 및 xDay 획득
             start_time = time.time()
@@ -1164,7 +1140,7 @@ class HybridReservationBot:
             result.date = target_date
             
             # 5.2 Selenium으로 날짜 선택 (시간 슬롯 표시를 위해)
-            self.logger.info("\n📌 PHASE 6.5: Selenium 날짜 선택")
+            self.logger.info("\n📌 PHASE 5.5: Selenium 날짜 선택")
             if not self.select_date_with_selenium(target_date_normalized):
                 result.error_message = "Selenium 날짜 선택 실패"
                 self.notifier.send_failure("Selenium 날짜 선택 실패", result)
