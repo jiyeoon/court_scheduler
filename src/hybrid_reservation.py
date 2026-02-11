@@ -133,7 +133,7 @@ class HybridReservationBot:
             return False
     
     def navigate_to_reservation_page(self) -> bool:
-        """예약 페이지로 이동하고 WebGate를 통과합니다."""
+        """예약하기 버튼을 클릭합니다 (9시 이전 진입)."""
         try:
             self.logger.info("🏠 메인 홈페이지 로딩 대기")
             WebDriverWait(self.driver, 60).until(
@@ -159,89 +159,14 @@ class HybridReservationBot:
                 self.driver.execute_script("arguments[0].click();", link)
                 self.logger.info("✅ 예약하기 버튼 클릭 완료 (JS click)")
             
-            # 페이지 전환 대기 (최대 10초)
-            time.sleep(1)
-            self.logger.info("🔄 페이지 전환 대기 중...")
+            # 페이지 전환 대기
+            time.sleep(2)
+            self.logger.info("✅ '9시에 새로고침하세요' 페이지 도착!")
             
-            # WebGate 대기열 통과 대기 (적극적 폴링)
-            self.logger.info("⏳ WebGate 대기열 통과 대기 중...")
-            
-            start_wait = time.time()
-            max_wait_seconds = 300  # 5분 (9시 전 진입 시 여유있게 대기)
-            poll_interval = 0.1  # 100ms 간격으로 빠르게 확인
-            last_status_log = 0
-            
-            while time.time() - start_wait < max_wait_seconds:
-                try:
-                    # 예약 페이지 도착 확인 (tab_by_date 존재)
-                    elements = self.driver.find_elements(By.ID, 'tab_by_date')
-                    if elements:
-                        elapsed = time.time() - start_wait
-                        self.logger.info(f"✅ 예약 페이지 진입 완료! (WebGate 통과: {elapsed:.1f}초)")
-                        break
-                    
-                    # WebGate 대기 상태 확인 및 로그 (5초마다)
-                    elapsed = time.time() - start_wait
-                    if elapsed - last_status_log >= 5:
-                        # WebGate 상태 정보 추출 시도
-                        try:
-                            # WebGate는 보통 iframe이나 특정 div에 대기 정보 표시
-                            queue_info = self.driver.execute_script("""
-                                // WebGate 대기열 정보 추출 시도
-                                var info = {};
-                                
-                                // 방법 1: WebGate 전역 변수
-                                if (typeof WebGate !== 'undefined' && WebGate.queue) {
-                                    info.position = WebGate.queue.position;
-                                    info.total = WebGate.queue.total;
-                                }
-                                
-                                // 방법 2: 대기 페이지 텍스트 파싱
-                                var waitText = document.body.innerText;
-                                var match = waitText.match(/(\d+)\s*번째|(\d+)\s*명/);
-                                if (match) {
-                                    info.text = match[0];
-                                }
-                                
-                                // 방법 3: 진행률 바
-                                var progress = document.querySelector('.progress-bar, .queue-progress, [class*="progress"]');
-                                if (progress) {
-                                    info.progress = progress.style.width || progress.getAttribute('aria-valuenow');
-                                }
-                                
-                                return info;
-                            """)
-                            
-                            if queue_info:
-                                status_parts = []
-                                if queue_info.get('position'):
-                                    status_parts.append(f"순번: {queue_info['position']}")
-                                if queue_info.get('text'):
-                                    status_parts.append(queue_info['text'])
-                                if queue_info.get('progress'):
-                                    status_parts.append(f"진행률: {queue_info['progress']}")
-                                
-                                if status_parts:
-                                    self.logger.info(f"   ⏳ 대기 중... ({elapsed:.0f}초) - {', '.join(status_parts)}")
-                                else:
-                                    self.logger.info(f"   ⏳ 대기 중... ({elapsed:.0f}초)")
-                            else:
-                                self.logger.info(f"   ⏳ 대기 중... ({elapsed:.0f}초)")
-                        except:
-                            self.logger.info(f"   ⏳ 대기 중... ({elapsed:.0f}초)")
-                        
-                        last_status_log = elapsed
-                    
-                    time.sleep(poll_interval)
-                    
-                except Exception:
-                    time.sleep(poll_interval)
-            else:
-                raise TimeoutError("WebGate 대기열 타임아웃 (300초 / 5분)")
             return True
             
         except Exception as e:
-            self.logger.info(f"❌ 예약 페이지 진입 실패: {e}")
+            self.logger.info(f"❌ 예약하기 버튼 클릭 실패: {e}")
             return False
     
     # =========================================================================
@@ -635,17 +560,15 @@ class HybridReservationBot:
         self.driver.refresh()
         self.logger.info("✅ 페이지 새로고침 완료")
         
-        # 예약 페이지 로딩 대기 (날짜 링크 표시될 때까지)
-        self.logger.info("📅 예약 가능한 날짜 로딩 대기...")
+        # WebGate 대기열 통과 대기
+        self.logger.info("⏳ WebGate 대기열 통과 대기 중...")
         try:
-            WebDriverWait(self.driver, 30).until(
-                EC.presence_of_all_elements_located(
-                    (By.XPATH, "//tbody//a[starts-with(@href, 'javascript:fn_tennis_time_list')]")
-                )
+            WebDriverWait(self.driver, 300).until(  # 5분
+                EC.presence_of_element_located((By.ID, 'tab_by_date'))
             )
-            self.logger.info("✅ 날짜 로딩 완료")
+            self.logger.info("✅ WebGate 통과 완료!")
         except Exception as e:
-            self.logger.info(f"⚠️ 날짜 로딩 대기 중 오류: {e}")
+            self.logger.info(f"⚠️ WebGate 통과 대기 중 오류 (계속 진행): {e}")
     
     def find_available_slots(
         self,
