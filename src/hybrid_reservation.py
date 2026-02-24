@@ -532,7 +532,7 @@ class HybridReservationBot:
     def wait_for_reservation_open(self) -> None:
         """로컬 시간 9:00:00.100에 페이지를 새로고침합니다."""
         # 로컬 시간 9:00:00.100에 새로고침 (100ms 마진)
-        target_time = self.target_time.replace(microsecond=100000)  # 0.100초 = 100,000 마이크로초
+        target_time = self.target_time.replace(microsecond=400000)  # 0.100초 = 100,000 마이크로초
         
         self.logger.info(f"⏰ 로컬 시간 9시 대기 (목표: {target_time.strftime('%H:%M:%S.%f')[:-3]})")
         
