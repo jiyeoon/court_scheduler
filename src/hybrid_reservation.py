@@ -531,8 +531,18 @@ class HybridReservationBot:
     
     def wait_for_reservation_open(self) -> None:
         """로컬 시간 9:00:00.100에 페이지를 새로고침합니다."""
-        # 로컬 시간 9:00:00.100에 새로고침 (100ms 마진)
-        target_time = self.target_time.replace(microsecond=400000)  # 0.100초 = 100,000 마이크로초
+        # 매번 현재 시각 기준으로 타겟을 재계산한다.
+        # (프로세스를 일찍 띄운 경우/날짜 변경 구간에서도 정확한 9시 타이밍 보장)
+        now = datetime.now(KST)
+        target_time = now.replace(
+            hour=self.config.reservation.reservation_open_hour,
+            minute=self.config.reservation.reservation_open_minute,
+            second=0,
+            microsecond=200000  # 0.100초
+        )
+        # 대상 시각이 이미 한참 지났다면(예: 전날 밤 실행), 다음 날로 이월
+        if (now - target_time).total_seconds() > 6 * 3600:
+            target_time += timedelta(days=1)
         
         self.logger.info(f"⏰ 로컬 시간 9시 대기 (목표: {target_time.strftime('%H:%M:%S.%f')[:-3]})")
         
@@ -555,9 +565,13 @@ class HybridReservationBot:
         else:
             self.logger.info("이미 목표 시각이 지났습니다. 즉시 실행합니다.")
         
-        # 페이지 새로고침
+        # 페이지 새로고침 (일부 페이지에서 refresh가 무시되는 경우를 대비해 fallback 포함)
         self.logger.info("🔄 페이지 새로고침")
-        self.driver.refresh()
+        try:
+            self.driver.refresh()
+        except Exception as e:
+            self.logger.info(f"⚠️ driver.refresh() 실패, JS reload로 재시도: {e}")
+            self.driver.execute_script("window.location.reload(true);")
         self.logger.info("✅ 페이지 새로고침 완료")
         
         # WebGate 대기열 통과 대기
