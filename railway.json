@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python -m src.main_hybrid --preferred-hour 20 --weekend-hour 10",
+    "restartPolicyType": "never"
+  }
+}
+
