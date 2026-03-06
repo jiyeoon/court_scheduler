@@ -596,13 +596,18 @@ class HybridReservationBot:
             # 1차: 정각 직전, 2차: 정각 직후(서버 경계 튐 방지)
             primary_target = open_time - timedelta(seconds=self.server_time_offset) - timedelta(milliseconds=150)
             secondary_target = open_time - timedelta(seconds=self.server_time_offset) + timedelta(milliseconds=250)
-            if (now - primary_target).total_seconds() > 6 * 3600:
-                primary_target += timedelta(days=1)
-                secondary_target += timedelta(days=1)
-            self.logger.info(
-                f"⏰ 목표 새로고침 시각: 1차 {primary_target.strftime('%H:%M:%S.%f')[:-3]}, "
-                f"2차 {secondary_target.strftime('%H:%M:%S.%f')[:-3]}"
-            )
+
+            # 예약 오픈 시각이 이미 지난 경우 → 즉시 진행 (다음 날로 넘기지 않음)
+            if now > secondary_target:
+                self.logger.info(
+                    f"ℹ️ 예약 오픈 시각({open_time.strftime('%H:%M')})이 이미 지났습니다. "
+                    f"대기 없이 즉시 진행합니다."
+                )
+            else:
+                self.logger.info(
+                    f"⏰ 목표 새로고침 시각: 1차 {primary_target.strftime('%H:%M:%S.%f')[:-3]}, "
+                    f"2차 {secondary_target.strftime('%H:%M:%S.%f')[:-3]}"
+                )
 
         # 2) 1차 새로고침
         did_primary_refresh = False

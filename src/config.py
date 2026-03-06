@@ -29,19 +29,19 @@ class ReservationStrategy:
 
 # 예약 전략 목록 (우선순위 순)
 RESERVATION_STRATEGIES = [
-    # 1순위: 실내 코트 + 19시-21시
-    ReservationStrategy(
-        name="실내 코트 19-21시",
-        target_hour=19,
-        time_slot_count=2,
-        preferred_courts=INDOOR_COURTS,
-    ),
-    # 2순위: 야외 코트 + 20시-22시
+    # 1순위: 야외 코트 + 20시-22시
     ReservationStrategy(
         name="야외 코트 20-22시",
         target_hour=20,
         time_slot_count=2,
         preferred_courts=OUTDOOR_COURTS,
+    ),
+    # 2순위: 실내 코트 + 19시-21시
+    ReservationStrategy(
+        name="실내 코트 19-21시",
+        target_hour=19,
+        time_slot_count=2,
+        preferred_courts=INDOOR_COURTS,
     ),
     # 3순위: 아무 코트나 + 가능한 늦은 연속 2시간
     ReservationStrategy(

@@ -48,10 +48,14 @@ def parse_target_time_kst(time_str: str) -> Optional[datetime]:
 
 
 def apply_preferred_hour(config, hour: int, logger: Logger, reason: str) -> None:
-    """auto_find_latest=False 전략들의 target_hour를 일괄 덮어씁니다."""
+    """auto_find_latest=False 전략들의 target_hour와 name을 일괄 덮어씁니다."""
     for strategy in config.reservation.strategies:
         if not strategy.auto_find_latest:
             strategy.target_hour = hour
+            end_hour = hour + strategy.time_slot_count
+            # 전략 이름도 실제 시간대에 맞게 갱신
+            court_label = strategy.name.split()[0]  # "실내" or "야외" 등
+            strategy.name = f"{court_label} 코트 {hour}-{end_hour}시"
     logger.info(f"🕒 선호 시간대 적용({reason}): {hour}시 시작")
 
 
