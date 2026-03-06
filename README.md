@@ -72,6 +72,20 @@ cp env.example .env
 python -m src.main
 ```
 
+## 🚂 Railway 배포
+
+이 저장소는 `Dockerfile` + `railway.json`으로 Railway 배포를 지원합니다.
+
+- 기본 실행 명령: `python -m src.main_hybrid --preferred-hour 20 --weekend-hour 10`
+- 필요한 환경변수: `LOGIN_ID`, `LOGIN_PASSWORD`, `LOGIN_URL`, `BASE_URL`, `SLACK_URL`
+
+### Railway Cron 설정 (reserve.yml 기준)
+
+`reserve.yml` 스케줄과 동일하게 Railway의 Cron Job을 2개 추가하세요.
+
+- `50 23 * * *` (KST 08:20)
+- `19 0 * * *` (KST 09:19)
+
 ## ⚠️ 주의사항
 
 - **개인정보**: 로그인 정보는 반드시 GitHub Secrets를 통해 관리하세요
