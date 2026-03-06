@@ -22,6 +22,7 @@ class ReservationResult:
     strategy_name: str = ""  # 성공한 전략 이름
     tried_strategies: List[str] = field(default_factory=list)  # 시도한 전략들
     error_message: str = ""  # 에러 메시지
+    login_id: str = ""  # 로그인 계정
     
     def get_court_type_emoji(self) -> str:
         """코트 타입에 따른 이모지 반환"""
@@ -32,8 +33,10 @@ class ReservationResult:
     def format_success_message(self) -> str:
         """성공 메시지 포맷팅"""
         emoji = self.get_court_type_emoji()
+        id_line = f"👤 계정: {self.login_id}\n" if self.login_id else ""
         return (
             f"```"
+            f"{id_line}"
             f"📅 날짜: {self.date}\n"
             f"⏰ 시간: {self.time_slot}\n"
             f"{emoji} 코트: {self.court_number}번 ({self.court_type})\n"
@@ -44,8 +47,10 @@ class ReservationResult:
     def format_failure_message(self) -> str:
         """실패 메시지 포맷팅"""
         tried = " → ".join(self.tried_strategies) if self.tried_strategies else "없음"
+        id_line = f"👤 계정: {self.login_id}\n" if self.login_id else ""
         return (
             f"```"
+            f"{id_line}"
             f"📅 날짜: {self.date or '선택 전 실패'}\n"
             f"🔄 시도한 전략: {tried}\n"
             f"❌ 실패 원인: {self.error_message}"
@@ -83,11 +88,12 @@ class Logger:
 class SlackNotifier:
     """Slack webhook notifier with log buffer support."""
     
-    def __init__(self, config: Config, logger: Logger):
+    def __init__(self, config: Config, logger: Logger, login_id: str = ""):
         self.webhook_url = config.slack_url
         self.base_url = config.base_url
         self.enabled = bool(self.webhook_url)
         self.logger = logger
+        self.login_id = login_id or getattr(config, "login_id", "")
     
     def _send_message(self, data: dict) -> bool:
         """

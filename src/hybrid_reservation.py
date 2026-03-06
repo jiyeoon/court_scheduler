@@ -1064,7 +1064,7 @@ class HybridReservationBot:
         self.logger.info("   Selenium(로그인) + HTTP Requests(예약)")
         self.logger.info("=" * 60)
         
-        result = ReservationResult()
+        result = ReservationResult(login_id=self.config.login_id)
         strategies = self.config.reservation.strategies
         
         try:
