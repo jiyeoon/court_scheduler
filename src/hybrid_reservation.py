@@ -72,6 +72,9 @@ class HybridReservationBot:
         # 선택된 정보 저장
         self.selected_date_str = ""
         self.selected_time_str = ""
+
+        # CLI에서 강제한 새로고침 목표 시각 (KST-aware datetime)
+        self.forced_refresh_time: Optional[datetime] = None
         
         # Base URL for API calls
         self.api_base_url = self.config.base_url.rstrip('/')
@@ -528,61 +531,117 @@ class HybridReservationBot:
     # =========================================================================
     # STEP 5: 예약 대기 및 실행
     # =========================================================================
-    
     def wait_for_reservation_open(self) -> None:
-        """로컬 시간 9:00:00.100에 페이지를 새로고침합니다."""
-        # 매번 현재 시각 기준으로 타겟을 재계산한다.
-        # (프로세스를 일찍 띄운 경우/날짜 변경 구간에서도 정확한 9시 타이밍 보장)
+        """로컬 시간과 서버 오프셋을 고려하여 정밀하게 페이지를 새로고침합니다."""
         now = datetime.now(KST)
-        target_time = now.replace(
-            hour=self.config.reservation.reservation_open_hour,
-            minute=self.config.reservation.reservation_open_minute,
-            second=0,
-            microsecond=200000  # 0.100초
-        )
-        # 대상 시각이 이미 한참 지났다면(예: 전날 밤 실행), 다음 날로 이월
-        if (now - target_time).total_seconds() > 6 * 3600:
-            target_time += timedelta(days=1)
-        
-        self.logger.info(f"⏰ 로컬 시간 9시 대기 (목표: {target_time.strftime('%H:%M:%S.%f')[:-3]})")
-        
-        current_time = datetime.now(KST)
-        time_diff = (target_time - current_time).total_seconds()
-        
-        if time_diff > 0:
-            if time_diff > 10:
-                sleep_time = time_diff - 10
-                self.logger.info(f"💤 목표 시각까지 {sleep_time:.1f}초 대기...")
-                time.sleep(sleep_time)
-            
-            self.logger.info("🎯 마지막 10초 정밀 대기 시작...")
-            while datetime.now(KST) < target_time:
-                time.sleep(0.0001)
-            
-            actual_time = datetime.now(KST)
-            self.logger.info(f"🚀 목표 시각 도달! 새로고침 시작!")
-            self.logger.info(f"   실제 로컬 시각: {actual_time.strftime('%H:%M:%S.%f')[:-3]}")
+
+        def _wait_until(target_ts: float) -> None:
+            remain = target_ts - time.time()
+            if remain > 0:
+                if remain > 5:
+                    self.logger.info("💤 목표 시각 2초 전까지 대기 중...")
+                    time.sleep(remain - 2)
+                self.logger.info("🎯 마지막 2초 정밀 대기...")
+                while time.time() < target_ts:
+                    time.sleep(0.0001)
+
+        def _fire_refresh(tag: str) -> None:
+            self.logger.info(f"🔄 새로고침 실행 ({tag}) @ {datetime.now(KST).strftime('%H:%M:%S.%f')[:-3]}")
+            try:
+                self.driver.execute_script(
+                    "window.onbeforeunload = null; alert = str => { }; confirm = str => { return true; };"
+                )
+                try:
+                    self.driver.switch_to.alert.accept()
+                except NoAlertPresentException:
+                    pass
+                except Exception:
+                    pass
+                self.driver.execute_script("location.reload(true);")
+            except Exception as e:
+                self.logger.info(f"⚠️ JS 새로고침 실패({tag}): {e}")
+                try:
+                    self.driver.refresh()
+                except Exception as e2:
+                    self.logger.info(f"⚠️ driver.refresh()도 실패({tag}): {e2}")
+
+        def _is_queue_or_ready_state() -> bool:
+            """
+            1차 새로고침 성공 상태 판별:
+            - 예약 페이지 진입 완료(tab_by_date 존재)
+            - WebGate 대기열 화면(예: '대기 xx팀' 텍스트) 표시
+            """
+            try:
+                if len(self.driver.find_elements(By.ID, "tab_by_date")) > 0:
+                    return True
+
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                queue_keywords = ("대기", "팀", "webgate", "WebGate")
+                return any(keyword in body_text for keyword in queue_keywords)
+            except Exception:
+                return False
+
+        # 1) 목표 시각 설정
+        if self.forced_refresh_time is not None:
+            primary_target = self.forced_refresh_time.astimezone(KST)
+            secondary_target = None
+            self.logger.info(f"⏰ 강제 목표 새로고침 시각: {primary_target.strftime('%H:%M:%S.%f')[:-3]}")
         else:
-            self.logger.info("이미 목표 시각이 지났습니다. 즉시 실행합니다.")
-        
-        # 페이지 새로고침 (일부 페이지에서 refresh가 무시되는 경우를 대비해 fallback 포함)
-        self.logger.info("🔄 페이지 새로고침")
+            open_time = now.replace(
+                hour=self.config.reservation.reservation_open_hour,
+                minute=self.config.reservation.reservation_open_minute,
+                second=0,
+                microsecond=0
+            )
+            # 1차: 정각 직전, 2차: 정각 직후(서버 경계 튐 방지)
+            primary_target = open_time - timedelta(seconds=self.server_time_offset) - timedelta(milliseconds=150)
+            secondary_target = open_time - timedelta(seconds=self.server_time_offset) + timedelta(milliseconds=250)
+            if (now - primary_target).total_seconds() > 6 * 3600:
+                primary_target += timedelta(days=1)
+                secondary_target += timedelta(days=1)
+            self.logger.info(
+                f"⏰ 목표 새로고침 시각: 1차 {primary_target.strftime('%H:%M:%S.%f')[:-3]}, "
+                f"2차 {secondary_target.strftime('%H:%M:%S.%f')[:-3]}"
+            )
+
+        # 2) 1차 새로고침
+        did_primary_refresh = False
+        primary_ts = primary_target.timestamp()
+        if primary_ts > time.time():
+            _wait_until(primary_ts)
+            _fire_refresh("1차")
+            did_primary_refresh = True
+        else:
+            self.logger.info("ℹ️ 1차 목표 시각이 현재보다 과거여서 즉시 새로고침합니다.")
+            _fire_refresh("1차(즉시)")
+            did_primary_refresh = True
+            secondary_target = None
+
+        # 1차에서 이미 대기열/예약 페이지 상태로 진입했다면 2차는 불필요
+        if did_primary_refresh and secondary_target is not None and _is_queue_or_ready_state():
+            self.logger.info("✅ 1차 새로고침으로 대기열/예약 페이지 진입 확인, 2차 새로고침 생략")
+            secondary_target = None
+
+        # 3) 2차 새로고침 (forced time 테스트 모드에서는 생략)
+        if secondary_target is not None:
+            secondary_ts = secondary_target.timestamp()
+            if secondary_ts > time.time():
+                _wait_until(secondary_ts)
+                _fire_refresh("2차")
+            else:
+                self.logger.info("⚠️ 2차 목표 시각이 이미 지나 2차 새로고침 생략")
+
+        # 4. WebGate 대기열 통과 대기
+        self.logger.info("⏳ WebGate 대기열 및 페이지 로딩 대기 중...")
         try:
-            self.driver.refresh()
-        except Exception as e:
-            self.logger.info(f"⚠️ driver.refresh() 실패, JS reload로 재시도: {e}")
-            self.driver.execute_script("window.location.reload(true);")
-        self.logger.info("✅ 페이지 새로고침 완료")
-        
-        # WebGate 대기열 통과 대기
-        self.logger.info("⏳ WebGate 대기열 통과 대기 중...")
-        try:
-            WebDriverWait(self.driver, 300).until(  # 5분
+            # tab_by_date가 나타날 때까지 대기
+            WebDriverWait(self.driver, 300).until(
                 EC.presence_of_element_located((By.ID, 'tab_by_date'))
             )
-            self.logger.info("✅ WebGate 통과 완료!")
+            self.logger.info("✅ 페이지 진입 성공!")
         except Exception as e:
-            self.logger.info(f"⚠️ WebGate 통과 대기 중 오류 (계속 진행): {e}")
+            self.logger.info(f"⚠️ 대기 중 오류 발생 (계속 진행): {e}")
+
     
     def find_available_slots(
         self,
@@ -1029,6 +1088,8 @@ class HybridReservationBot:
             
             # ====== PHASE 3: 9:00까지 대기 + 새로고침 ======
             self.logger.info("\n📌 PHASE 3: 9:00 대기 + 새로고침")
+            # 서버 Date 헤더 기준 오프셋 측정 (정각 경계 오차 보정)
+            self.measure_server_time_offset()
             self.wait_for_reservation_open()
             
             # ====== PHASE 4: 쿠키 추출 ======
