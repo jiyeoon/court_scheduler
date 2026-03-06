@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Seoul
 
 WORKDIR /app
@@ -30,7 +31,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
-COPY env.example ./env.example
 
 # Optional hints for runtime (Selenium mostly finds them automatically)
 ENV CHROME_BIN=/usr/bin/chromium \

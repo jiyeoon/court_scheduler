@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.git/
+.github/
+.DS_Store
+reservation.log
+reservation_error.log
+test.py
+*.ipynb
+terminals/
+
