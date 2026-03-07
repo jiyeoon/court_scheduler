@@ -37,5 +37,5 @@ ENV CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # Same as reserve.yml command
-CMD ["python", "-m", "src.main_hybrid", "--preferred-hour", "20", "--weekend-hour", "10"]
+CMD ["python", "-m", "src.main_hybrid", "--preferred-hour", "20", "--weekend-hour", "10", "--target-time", "08:59:59.800"]
 
