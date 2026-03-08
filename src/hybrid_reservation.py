@@ -222,9 +222,9 @@ class HybridReservationBot:
     # =========================================================================
     
     def measure_server_time_offset(self) -> float:
-        """서버 시간과 로컬 시간의 차이를 측정합니다."""
+        """서버 시간과 로컬 시간의 차이를 측정합니다 (중앙값 사용)."""
         try:
-            self.logger.info("🕐 서버 시간 측정 중 (5회, 보수적 최솟값 사용)...")
+            self.logger.info("🕐 서버 시간 측정 중 (5회, 중앙값 사용)...")
             
             offsets = []
             for i in range(5):
@@ -244,10 +244,14 @@ class HybridReservationBot:
                 time.sleep(0.05)
             
             if offsets:
-                min_offset = min(offsets)
-                self.server_time_offset = min_offset
-                self.logger.info(f"📊 최솟값: {min_offset:.3f}초")
-                return min_offset
+                sorted_offsets = sorted(offsets)
+                median_offset = sorted_offsets[len(sorted_offsets) // 2]
+                self.server_time_offset = median_offset
+                self.logger.info(
+                    f"📊 중앙값: {median_offset:.3f}초 "
+                    f"(범위: {sorted_offsets[0]:.3f} ~ {sorted_offsets[-1]:.3f})"
+                )
+                return median_offset
             
             return 0.0
             
@@ -1093,8 +1097,11 @@ class HybridReservationBot:
             
             # ====== PHASE 3: 9:00까지 대기 + 새로고침 ======
             self.logger.info("\n📌 PHASE 3: 9:00 대기 + 새로고침")
-            # 서버 Date 헤더 기준 오프셋 측정 (정각 경계 오차 보정)
-            self.measure_server_time_offset()
+            # --target-time 강제 지정 시 오프셋 측정 불필요 (로컬 시각 기준)
+            if self.forced_refresh_time is None:
+                self.measure_server_time_offset()
+            else:
+                self.logger.info("⏩ --target-time 지정됨, 서버 오프셋 측정 생략")
             self.wait_for_reservation_open()
             
             # ====== PHASE 4: 쿠키 추출 ======

@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python -m src.main_hybrid --preferred-hour 20 --weekend-hour 10 --target-time 08:59:59.800",
+    "startCommand": "python -m src.main_hybrid --preferred-hour 20 --weekend-hour 10 --target-time 09:00:00.300",
     "restartPolicyType": "never"
   }
 }
