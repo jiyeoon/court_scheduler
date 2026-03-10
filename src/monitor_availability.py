@@ -49,7 +49,7 @@ COMMON_PARAMS = {
     "default.locale": "CCMN101.KOR",
 }
 
-DEFAULT_INTERVAL_MIN = 10
+DEFAULT_INTERVAL_MIN = 5
 
 
 # ── 유틸 ──────────────────────────────────────────────────────────────
