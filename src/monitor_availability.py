@@ -409,6 +409,7 @@ def main():
         while True:
             try:
                 notified = run_once(login_id, login_pw, slack_url, notified)
+                log(f"💤 [{datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}] 완료 — {args.interval}분 후 다시 실행")
             except Exception as e:
                 log(f"❌ 실행 중 오류: {e}")
             time.sleep(args.interval * 60)
