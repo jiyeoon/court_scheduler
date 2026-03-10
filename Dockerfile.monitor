@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Seoul
+
+WORKDIR /app
+
+# 모니터는 순수 HTTP 요청만 사용 → Chrome/Tesseract 불필요
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir requests python-dotenv
+
+COPY src ./src
+
+CMD ["python", "-m", "src.monitor_availability", "--loop"]
