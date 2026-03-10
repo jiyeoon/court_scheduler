@@ -1290,10 +1290,10 @@ class HybridReservationBot:
                         # 실패 시 다음 코트 시도
                         self.logger.info(f"⚠️ {message}, 다음 코트 시도...")
             
-            # 모든 전략 실패
-            result.error_message = "모든 전략 실패"
-            self.notifier.send_failure("모든 전략 실패", result)
-            return 1
+            # 모든 전략 실패 — 자리 없음은 프로그램 에러가 아니므로 exit 0
+            result.error_message = "모든 전략 실패 (빈 자리 없음)"
+            self.notifier.send_failure("모든 전략 실패 (빈 자리 없음)", result)
+            return 0
             
         except Exception as e:
             self.logger.info(f"💥 예외 발생: {e}")
