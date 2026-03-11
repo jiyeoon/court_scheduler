@@ -3,7 +3,7 @@
 실내 테니스장 빈코트 모니터 — 2시간 연속 빈 슬롯 Slack 알림
 
 조건:
-  • 평일: 19시 이후 2시간 연속 예약 가능
+  • 평일: 19시 이후 1시간 이상 예약 가능
   • 주말: 아무 시간대 2시간 연속 예약 가능
 
 동작:
@@ -187,15 +187,19 @@ def get_time_slots(session: requests.Session, date_str: str) -> List[Dict]:
 def find_consecutive_slots(
     time_slots: List[Dict],
     date_str: str,
-    min_hours: int = 2,
 ) -> List[Dict]:
     """
-    2시간 연속 예약 가능한 슬롯 조합을 찾는다.
+    예약 가능한 슬롯 조합을 찾는다.
+
+    조건:
+      • 평일 19시 이후: 1시간 이상이면 알림
+      • 주말: 2시간 연속 이상이면 알림
 
     Returns:
         [{'date': ..., 'court': ..., 'start': 19, 'end': 21, ...}, ...]
     """
     weekend = is_weekend(date_str)
+    min_hours = 1 if not weekend else 2
     results = []
 
     for court in COURT_PREFIX:
@@ -252,6 +256,20 @@ def find_consecutive_slots(
                     )
                     break  # 이 시작점에서 가장 짧은 연속 슬롯만 기록
 
+            # 평일 1시간: 단일 슬롯도 결과에 포함
+            if min_hours == 1 and len(consecutive) == 1:
+                end_hour = start_hour + 1
+                results.append(
+                    {
+                        "date": date_str,
+                        "date_fmt": format_date(date_str),
+                        "court": f"{court}코트",
+                        "start": start_hour,
+                        "end": end_hour,
+                        "is_weekend": weekend,
+                    }
+                )
+
     return results
 
 
@@ -264,7 +282,8 @@ def send_slack_notification(webhook_url: str, slots: List[Dict]) -> bool:
 
     lines = []
     for s in slots:
-        day_type = "🗓️ 주말" if s["is_weekend"] else "🌙 평일 저녁"
+        hours = s["end"] - s["start"]
+        day_type = "🗓️ 주말" if s["is_weekend"] else f"🌙 평일 저녁 {hours}h"
         lines.append(
             f"• {s['date_fmt']}  |  {s['court']}  |  "
             f"{s['start']:02d}:00 ~ {s['end']:02d}:00  ({day_type})"
